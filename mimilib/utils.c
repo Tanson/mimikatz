@@ -1,7 +1,7 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #include "utils.h"
 
@@ -27,5 +27,15 @@ void klog_password(FILE * logfile, PUNICODE_STRING pPassword)
 		else
 			for(i = 0; i < pPassword->Length; i++)
 				klog(logfile, L"%02x ", ((LPCBYTE) pPassword->Buffer)[i]);
+	}
+}
+
+void klog_sid(FILE * logfile, PSID pSid)
+{
+	LPWSTR stringSid;
+	if(pSid && ConvertSidToStringSid(pSid, &stringSid))
+	{
+		klog(logfile, L"%s", stringSid);
+		LocalFree(stringSid);
 	}
 }

@@ -1,7 +1,7 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #include "kull_m_token.h"
 
@@ -17,7 +17,7 @@ BOOL kull_m_token_getNameDomainFromToken(HANDLE hToken, PWSTR * pName, PWSTR * p
 		{
 			if(GetTokenInformation(hToken, TokenUser, pTokenUser, szNeeded, &szNeeded))
 			{
-				if((result = kull_m_token_getNameDomainFromSID(pTokenUser->User.Sid, pName, pDomain, pSidNameUse)) && pSid)
+				if((result = kull_m_token_getNameDomainFromSID(pTokenUser->User.Sid, pName, pDomain, pSidNameUse, NULL)) && pSid)
 					result = ConvertSidToStringSid(pTokenUser->User.Sid, pSid);
 			}
 			LocalFree(pTokenUser);
@@ -26,25 +26,55 @@ BOOL kull_m_token_getNameDomainFromToken(HANDLE hToken, PWSTR * pName, PWSTR * p
 	return result;
 }
 
-BOOL kull_m_token_getNameDomainFromSID(PSID pSid, PWSTR * pName, PWSTR * pDomain, PSID_NAME_USE pSidNameUse)
+PCWCHAR SidNameUses[] = {L"User", L"Group", L"Domain", L"Alias", L"WellKnownGroup", L"DeletedAccount", L"Invalid", L"Unknown", L"Computer", L"Label"};
+PCWCHAR kull_m_token_getSidNameUse(SID_NAME_USE SidNameUse)
+{
+	return (SidNameUse > 0 && SidNameUse <= SidTypeLabel) ? SidNameUses[SidNameUse - 1] : L"unk!";
+}
+
+BOOL kull_m_token_getNameDomainFromSID(PSID pSid, PWSTR * pName, PWSTR * pDomain, PSID_NAME_USE pSidNameUse, LPCWSTR system)
 {
 	BOOL result = FALSE;
 	SID_NAME_USE sidNameUse;
 	PSID_NAME_USE peUse = pSidNameUse ? pSidNameUse : &sidNameUse;
 	DWORD cchName = 0, cchReferencedDomainName = 0;
 	
-	if(!LookupAccountSid(NULL, pSid, NULL, &cchName, NULL, &cchReferencedDomainName, peUse) && (GetLastError() == ERROR_INSUFFICIENT_BUFFER))
+	if(!LookupAccountSid(system, pSid, NULL, &cchName, NULL, &cchReferencedDomainName, peUse) && (GetLastError() == ERROR_INSUFFICIENT_BUFFER))
 	{
 		if(*pName = (PWSTR) LocalAlloc(LPTR, cchName * sizeof(wchar_t)))
 		{
 			if(*pDomain = (PWSTR) LocalAlloc(LPTR, cchReferencedDomainName * sizeof(wchar_t)))
 			{
-				result = LookupAccountSid(NULL, pSid, *pName, &cchName, *pDomain, &cchReferencedDomainName, peUse);
+				result = LookupAccountSid(system, pSid, *pName, &cchName, *pDomain, &cchReferencedDomainName, peUse);
 				if(!result)
 					*pDomain = (PWSTR) LocalFree(*pDomain);
 			}
 			if(!result)
 				*pName = (PWSTR) LocalFree(*pName);
+		}
+	}
+	return result;
+}
+
+BOOL kull_m_token_getSidDomainFromName(PCWSTR pName, PSID * pSid, PWSTR * pDomain, PSID_NAME_USE pSidNameUse, LPCWSTR system)
+{
+	BOOL result = FALSE;
+	SID_NAME_USE sidNameUse;
+	PSID_NAME_USE peUse = pSidNameUse ? pSidNameUse : &sidNameUse;
+	DWORD cbSid = 0, cchReferencedDomainName = 0;
+	
+	if(!LookupAccountName(system, pName, NULL, &cbSid, NULL, &cchReferencedDomainName, peUse) && (GetLastError() == ERROR_INSUFFICIENT_BUFFER))
+	{
+		if(*pSid = (PSID) LocalAlloc(LPTR, cbSid * sizeof(wchar_t)))
+		{
+			if(*pDomain = (PWSTR) LocalAlloc(LPTR, cchReferencedDomainName * sizeof(wchar_t)))
+			{
+				result = LookupAccountName(system, pName, *pSid, &cbSid, *pDomain, &cchReferencedDomainName, peUse);
+				if(!result)
+					*pDomain = (PWSTR) LocalFree(*pDomain);
+			}
+			if(!result)
+				*pSid = (PSID) LocalFree(*pSid);
 		}
 	}
 	return result;
@@ -65,11 +95,11 @@ BOOL CALLBACK kull_m_token_getTokens_process_callback(PSYSTEM_PROCESS_INFORMATIO
 	BOOL status = TRUE;
 	HANDLE hProcess, hToken;
 	
-	if(hProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, (ULONG) pSystemProcessInformation->UniqueProcessId))
+	if(hProcess = OpenProcess(PROCESS_QUERY_INFORMATION, FALSE, PtrToUlong(pSystemProcessInformation->UniqueProcessId)))
 	{
 		if(OpenProcessToken(hProcess, TOKEN_QUERY | TOKEN_DUPLICATE, &hToken))
 		{
-			status = ((PKULL_M_TOKEN_ENUM_DATA) pvArg)->callback(hToken, (ULONG) pSystemProcessInformation->UniqueProcessId, ((PKULL_M_TOKEN_ENUM_DATA) pvArg)->pvArg);
+			status = ((PKULL_M_TOKEN_ENUM_DATA) pvArg)->callback(hToken, PtrToUlong(pSystemProcessInformation->UniqueProcessId), ((PKULL_M_TOKEN_ENUM_DATA) pvArg)->pvArg);
 			CloseHandle(hToken);
 		}
 		CloseHandle(hProcess);

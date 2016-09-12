@@ -167,6 +167,66 @@
     <ClCompile Include="modules\dpapi\kuhl_m_dpapi_oe.c">
       <Filter>local modules\dpapi</Filter>
     </ClCompile>
+    <ClCompile Include="..\modules\kull_m_cred.c">
+      <Filter>common modules</Filter>
+    </ClCompile>
+    <ClCompile Include="..\modules\kull_m_busylight.c">
+      <Filter>common modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\kuhl_m_busylight.c">
+      <Filter>local modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\dpapi\packages\kuhl_m_dpapi_wlan.c">
+      <Filter>local modules\dpapi\packages</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\kuhl_m_sysenvvalue.c">
+      <Filter>local modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\kuhl_m_sid.c">
+      <Filter>local modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\dpapi\packages\kuhl_m_dpapi_chrome.c">
+      <Filter>local modules\dpapi\packages</Filter>
+    </ClCompile>
+    <ClCompile Include="..\modules\sqlite3_omit.c">
+      <Filter>common modules</Filter>
+    </ClCompile>
+    <ClCompile Include="..\modules\kull_m_xml.c">
+      <Filter>common modules</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\kuhl_m_iis.c">
+      <Filter>local modules</Filter>
+    </ClCompile>
+    <ClCompile Include="..\modules\rpc\kull_m_rpc.c">
+      <Filter>common modules\rpc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\modules\rpc\kull_m_rpc_bkrp.c">
+      <Filter>common modules\rpc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\modules\rpc\kull_m_rpc_drsr.c">
+      <Filter>common modules\rpc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\modules\rpc\kull_m_rpc_ms-bkrp_c.c">
+      <Filter>common modules\rpc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\modules\rpc\kull_m_rpc_ms-drsr_c.c">
+      <Filter>common modules\rpc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\modules\rpc\kull_m_rpc_ms-pac.c">
+      <Filter>common modules\rpc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\modules\rpc\kull_m_rpc_ms-credentialkeys.c">
+      <Filter>common modules\rpc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\modules\rpc\kull_m_rpc_dpapi-entries.c">
+      <Filter>common modules\rpc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\modules\rpc\kull_m_rpc_ms-claims.c">
+      <Filter>common modules\rpc</Filter>
+    </ClCompile>
+    <ClCompile Include="modules\kerberos\kuhl_m_kerberos_claims.c">
+      <Filter>local modules\kerberos</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="mimikatz.h" />
@@ -308,9 +368,6 @@
     <ClInclude Include="modules\kuhl_m_vault.h">
       <Filter>local modules</Filter>
     </ClInclude>
-    <ClInclude Include="..\modules\kull_m_rpce.h">
-      <Filter>common modules</Filter>
-    </ClInclude>
     <ClInclude Include="..\modules\kull_m_samlib.h">
       <Filter>common modules</Filter>
     </ClInclude>
@@ -353,6 +410,69 @@
     <ClInclude Include="modules\dpapi\kuhl_m_dpapi_oe.h">
       <Filter>local modules\dpapi</Filter>
     </ClInclude>
+    <ClInclude Include="..\modules\kull_m_cred.h">
+      <Filter>common modules</Filter>
+    </ClInclude>
+    <ClInclude Include="..\modules\kull_m_busylight.h">
+      <Filter>common modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\kuhl_m_busylight.h">
+      <Filter>local modules</Filter>
+    </ClInclude>
+    <ClInclude Include="..\modules\kull_m_busylight_hid.h">
+      <Filter>common modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\dpapi\packages\kuhl_m_dpapi_wlan.h">
+      <Filter>local modules\dpapi\packages</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\kuhl_m_sysenvvalue.h">
+      <Filter>local modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\kuhl_m_sid.h">
+      <Filter>local modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\dpapi\packages\kuhl_m_dpapi_chrome.h">
+      <Filter>local modules\dpapi\packages</Filter>
+    </ClInclude>
+    <ClInclude Include="..\modules\sqlite3_omit.h">
+      <Filter>common modules</Filter>
+    </ClInclude>
+    <ClInclude Include="..\modules\kull_m_xml.h">
+      <Filter>common modules</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\kuhl_m_iis.h">
+      <Filter>local modules</Filter>
+    </ClInclude>
+    <ClInclude Include="..\modules\rpc\kull_m_rpc.h">
+      <Filter>common modules\rpc</Filter>
+    </ClInclude>
+    <ClInclude Include="..\modules\rpc\kull_m_rpc_bkrp.h">
+      <Filter>common modules\rpc</Filter>
+    </ClInclude>
+    <ClInclude Include="..\modules\rpc\kull_m_rpc_drsr.h">
+      <Filter>common modules\rpc</Filter>
+    </ClInclude>
+    <ClInclude Include="..\modules\rpc\kull_m_rpc_ms-bkrp.h">
+      <Filter>common modules\rpc</Filter>
+    </ClInclude>
+    <ClInclude Include="..\modules\rpc\kull_m_rpc_ms-drsr.h">
+      <Filter>common modules\rpc</Filter>
+    </ClInclude>
+    <ClInclude Include="..\modules\rpc\kull_m_rpc_ms-pac.h">
+      <Filter>common modules\rpc</Filter>
+    </ClInclude>
+    <ClInclude Include="..\modules\rpc\kull_m_rpc_ms-credentialkeys.h">
+      <Filter>common modules\rpc</Filter>
+    </ClInclude>
+    <ClInclude Include="..\modules\rpc\kull_m_rpc_dpapi-entries.h">
+      <Filter>common modules\rpc</Filter>
+    </ClInclude>
+    <ClInclude Include="..\modules\rpc\kull_m_rpc_ms-claims.h">
+      <Filter>common modules\rpc</Filter>
+    </ClInclude>
+    <ClInclude Include="modules\kerberos\kuhl_m_kerberos_claims.h">
+      <Filter>local modules\kerberos</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <Filter Include="local modules">
@@ -380,6 +500,9 @@
     </Filter>
     <Filter Include="local modules\dpapi\packages">
       <UniqueIdentifier>{0068506b-99c4-4d30-936a-d54598f49425}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="common modules\rpc">
+      <UniqueIdentifier>{36857c96-00a6-4cb6-8ca9-591d0561662c}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>

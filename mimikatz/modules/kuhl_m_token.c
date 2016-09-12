@@ -1,7 +1,7 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #include "kuhl_m_token.h"
 
@@ -92,7 +92,7 @@ NTSTATUS kuhl_m_token_list_or_elevate(int argc, wchar_t * argv[], BOOL elevate)
 		{
 			if(kull_m_net_CreateWellKnownSid(type, pDomainInfo ? pDomainInfo->Sid : NULL, &pData.pSid))
 			{
-				if(kull_m_token_getNameDomainFromSID(pData.pSid, &name, &domain, NULL))
+				if(kull_m_token_getNameDomainFromSID(pData.pSid, &name, &domain, NULL, NULL))
 				{
 					kprintf(L"%s\\%s\n", domain, name);
 					LocalFree(name);

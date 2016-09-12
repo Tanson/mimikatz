@@ -1,7 +1,7 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #pragma once
 #include "globals.h"
@@ -151,30 +151,13 @@ typedef struct _KERB_CHECKSUM {
 	PVOID unk0_null;
 } KERB_CHECKSUM, *PKERB_CHECKSUM;
 
-typedef struct _KERB_HASHPASSWORD_GENERIC {
-	DWORD Type;
-	SIZE_T Size;
-	PBYTE Checksump;
-} KERB_HASHPASSWORD_GENERIC, *PKERB_HASHPASSWORD_GENERIC;
-
-typedef struct _KERB_HASHPASSWORD_5 {
-	LSA_UNICODE_STRING salt;	// http://tools.ietf.org/html/rfc3962
-	KERB_HASHPASSWORD_GENERIC generic;
-} KERB_HASHPASSWORD_5, *PKERB_HASHPASSWORD_5;
-
-typedef struct _KERB_HASHPASSWORD_6 {
-	LSA_UNICODE_STRING salt;	// http://tools.ietf.org/html/rfc3962
-	PVOID stringToKey; // AES Iterations (dword ?)
-	KERB_HASHPASSWORD_GENERIC generic;
-} KERB_HASHPASSWORD_6, *PKERB_HASHPASSWORD_6;
-
 typedef NTSTATUS (WINAPI * PKERB_ECRYPT_INITIALIZE) (LPCVOID Key, DWORD KeySize, DWORD KeyUsage, PVOID * pContext);
 typedef NTSTATUS (WINAPI * PKERB_ECRYPT_ENCRYPT) (PVOID pContext, LPCVOID Data, DWORD DataSize, PVOID Output, DWORD * OutputSize);
 typedef NTSTATUS (WINAPI * PKERB_ECRYPT_DECRYPT) (PVOID pContext, LPCVOID Data, DWORD DataSize, PVOID Output, DWORD * OutputSize);
 typedef NTSTATUS (WINAPI * PKERB_ECRYPT_FINISH) (PVOID * pContext);
 typedef NTSTATUS (WINAPI * PKERB_ECRYPT_HASHPASSWORD_NT5) (PCUNICODE_STRING String, PVOID Output);
 typedef NTSTATUS (WINAPI * PKERB_ECRYPT_HASHPASSWORD_NT6) (PCUNICODE_STRING Password, PCUNICODE_STRING Salt, DWORD Count, PVOID Output);
-// RandomKey
+typedef NTSTATUS (WINAPI * PKERB_ECRYPT_RANDOMKEY) (LPCVOID Key, DWORD KeySize, PVOID Output);
 // Control
 
 typedef struct _KERB_ECRYPT {
@@ -194,7 +177,7 @@ typedef struct _KERB_ECRYPT {
 		PKERB_ECRYPT_HASHPASSWORD_NT5 HashPassword_NT5;
 		PKERB_ECRYPT_HASHPASSWORD_NT6 HashPassword_NT6;
 	};
-	PVOID RandomKey;
+	PKERB_ECRYPT_RANDOMKEY RandomKey;
 	PVOID Control;
 	PVOID unk0_null;
 	PVOID unk1_null;

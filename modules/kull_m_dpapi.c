@@ -1,9 +1,11 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #include "kull_m_dpapi.h"
+										
+const GUID KULL_M_DPAPI_GUID_PROVIDER = CRYPTPROTECT_DEFAULT_PROVIDER;
 
 PKULL_M_DPAPI_BLOB kull_m_dpapi_blob_create(LPCVOID data/*, DWORD size*/)
 {
@@ -12,11 +14,12 @@ PKULL_M_DPAPI_BLOB kull_m_dpapi_blob_create(LPCVOID data/*, DWORD size*/)
 	{
 		RtlCopyMemory(blob, data, FIELD_OFFSET(KULL_M_DPAPI_BLOB, szDescription));
 		blob->szDescription = (PWSTR) ((PBYTE) data + FIELD_OFFSET(KULL_M_DPAPI_BLOB, szDescription));
-		RtlCopyMemory(&blob->algCrypt, (PBYTE) blob->szDescription + blob->dwDescriptionLen, blob->dwDescriptionLen + FIELD_OFFSET(KULL_M_DPAPI_BLOB, pbSalt) - FIELD_OFFSET(KULL_M_DPAPI_BLOB, algCrypt));
+		RtlCopyMemory(&blob->algCrypt, (PBYTE) blob->szDescription + blob->dwDescriptionLen, /*blob->dwDescriptionLen + */FIELD_OFFSET(KULL_M_DPAPI_BLOB, pbSalt) - FIELD_OFFSET(KULL_M_DPAPI_BLOB, algCrypt));
+
 		blob->pbSalt = (PBYTE) blob->szDescription + blob->dwDescriptionLen + FIELD_OFFSET(KULL_M_DPAPI_BLOB, pbSalt) - FIELD_OFFSET(KULL_M_DPAPI_BLOB, algCrypt);
 		blob->dwHmacKeyLen = *(PDWORD) ((PBYTE) blob->pbSalt + blob->dwSaltLen);
 		blob->pbHmackKey = (PBYTE) blob->pbSalt + blob->dwSaltLen + FIELD_OFFSET(KULL_M_DPAPI_BLOB, pbHmackKey) - FIELD_OFFSET(KULL_M_DPAPI_BLOB, dwHmacKeyLen);
-		RtlCopyMemory(&blob->algHash, (PBYTE) blob->pbHmackKey + blob->dwHmacKeyLen, blob->dwHmacKeyLen + FIELD_OFFSET(KULL_M_DPAPI_BLOB, pbHmack2Key) - FIELD_OFFSET(KULL_M_DPAPI_BLOB, algHash));
+		RtlCopyMemory(&blob->algHash, (PBYTE) blob->pbHmackKey + blob->dwHmacKeyLen, /*blob->dwHmacKeyLen + */FIELD_OFFSET(KULL_M_DPAPI_BLOB, pbHmack2Key) - FIELD_OFFSET(KULL_M_DPAPI_BLOB, algHash));
 		blob->pbHmack2Key = (PBYTE) blob->pbHmackKey + blob->dwHmacKeyLen + FIELD_OFFSET(KULL_M_DPAPI_BLOB, pbHmack2Key) - FIELD_OFFSET(KULL_M_DPAPI_BLOB, algHash);
 		blob->dwDataLen = *(PDWORD) ((PBYTE) blob->pbHmack2Key + blob->dwHmac2KeyLen);
 		blob->pbData = (PBYTE) blob->pbHmack2Key + blob->dwHmac2KeyLen + FIELD_OFFSET(KULL_M_DPAPI_BLOB, pbData) - FIELD_OFFSET(KULL_M_DPAPI_BLOB, dwDataLen);
@@ -62,7 +65,9 @@ void kull_m_dpapi_blob_descr(DWORD level, PKULL_M_DPAPI_BLOB blob)
 		kprintf(L"%*s" L"  guidProvider       : ", level << 1, L""); kull_m_string_displayGUID(&blob->guidProvider); kprintf(L"\n");
 		kprintf(L"%*s" L"  dwMasterKeyVersion : %08x - %u\n", level << 1, L"", blob->dwMasterKeyVersion, blob->dwMasterKeyVersion);
 		kprintf(L"%*s" L"  guidMasterKey      : ", level << 1, L""); kull_m_string_displayGUID(&blob->guidMasterKey); kprintf(L"\n");
-		kprintf(L"%*s" L"  dwFlags            : %08x - %u\n", level << 1, L"", blob->dwFlags, blob->dwFlags);
+		kprintf(L"%*s" L"  dwFlags            : %08x - %u (", level << 1, L"", blob->dwFlags, blob->dwFlags);
+		kull_m_dpapi_displayBlobFlags(blob->dwFlags);
+		kprintf(L")\n");
 		kprintf(L"%*s" L"  dwDescriptionLen   : %08x - %u\n", level << 1, L"", blob->dwDescriptionLen, blob->dwDescriptionLen);
 		kprintf(L"%*s" L"  szDescription      : %s\n", level << 1, L"", blob->szDescription);
 		kprintf(L"%*s" L"  algCrypt           : %08x - %u (%s)\n", level << 1, L"", blob->algCrypt, blob->algCrypt, kull_m_crypto_algid_to_name(blob->algCrypt));
@@ -629,41 +634,41 @@ BOOL kull_m_dpapi_unprotect_masterkey_with_shaDerivedkey(PKULL_M_DPAPI_MASTERKEY
 	return status;
 }
 
-BOOL kull_m_dpapi_unprotect_backupkey_with_secret(DWORD flags, PKULL_M_DPAPI_MASTERKEY masterkey, PCWSTR sid, LPCVOID secret, DWORD secretLen, PVOID *output, DWORD *outputLen)
-{
-	BOOL status = FALSE, isDPAPISecret = flags & 1;
-	LPCBYTE ptrSecret = (LPCBYTE) secret;
-	PVOID data, hash;
-	ALG_ID algID = (masterkey->algHash == CALG_SHA_512) ? CALG_SHA_512 : CALG_SHA1;
-	DWORD sidLen = (DWORD) (wcslen(sid) + 1) * sizeof(wchar_t), hashSize = kull_m_crypto_hash_len(algID), dataSize = sidLen;
-
-	if(!isDPAPISecret || (isDPAPISecret && ptrSecret && secretLen))
-	{
-		if(secretLen == 2 * SHA_DIGEST_LENGTH + sizeof(DWORD))
-		{
-			ptrSecret += sizeof(DWORD);
-			secretLen -= sizeof(DWORD);
-		}
-		if(isDPAPISecret)
-			dataSize += secretLen;
-		if(data = (PBYTE) LocalAlloc(LPTR, dataSize))
-		{
-			RtlCopyMemory(data, sid, sidLen);
-			if(isDPAPISecret)
-				RtlCopyMemory((PBYTE) data + sidLen, ptrSecret, secretLen);
-
-			if(hash = LocalAlloc(LPTR, hashSize))
-			{
-				if(kull_m_crypto_hash(algID, data, dataSize, hash, hashSize))
-					status = kull_m_dpapi_unprotect_masterkey_with_shaDerivedkey(masterkey, hash, hashSize, output, outputLen);
-				LocalFree(hash);
-			}
-			LocalFree(data);
-		}
-	}
-	else PRINT_ERROR(L"This backup key need DPAPI_SYSTEM secret\n");
-	return status;
-}
+//BOOL kull_m_dpapi_unprotect_backupkey_with_secret(DWORD flags, PKULL_M_DPAPI_MASTERKEY masterkey, PCWSTR sid, LPCVOID secret, DWORD secretLen, PVOID *output, DWORD *outputLen)
+//{
+//	BOOL status = FALSE, isDPAPISecret = flags & 1;
+//	LPCBYTE ptrSecret = (LPCBYTE) secret;
+//	PVOID data, hash;
+//	ALG_ID algID = (masterkey->algHash == CALG_SHA_512) ? CALG_SHA_512 : CALG_SHA1;
+//	DWORD sidLen = (DWORD) (wcslen(sid) + 1) * sizeof(wchar_t), hashSize = kull_m_crypto_hash_len(algID), dataSize = sidLen;
+//
+//	if(!isDPAPISecret || (isDPAPISecret && ptrSecret && secretLen))
+//	{
+//		if(secretLen == 2 * SHA_DIGEST_LENGTH + sizeof(DWORD))
+//		{
+//			ptrSecret += sizeof(DWORD);
+//			secretLen -= sizeof(DWORD);
+//		}
+//		if(isDPAPISecret)
+//			dataSize += secretLen;
+//		if(data = (PBYTE) LocalAlloc(LPTR, dataSize))
+//		{
+//			RtlCopyMemory(data, sid, sidLen);
+//			if(isDPAPISecret)
+//				RtlCopyMemory((PBYTE) data + sidLen, ptrSecret, secretLen);
+//
+//			if(hash = LocalAlloc(LPTR, hashSize))
+//			{
+//				if(kull_m_crypto_hash(algID, data, dataSize, hash, hashSize))
+//					status = kull_m_dpapi_unprotect_masterkey_with_shaDerivedkey(masterkey, hash, hashSize, output, outputLen);
+//				LocalFree(hash);
+//			}
+//			LocalFree(data);
+//		}
+//	}
+//	else PRINT_ERROR(L"This backup key need DPAPI_SYSTEM secret\n");
+//	return status;
+//}
 
 BOOL kull_m_dpapi_unprotect_domainkey_with_key(PKULL_M_DPAPI_MASTERKEY_DOMAINKEY domainkey, LPCVOID key, DWORD keyLen, PVOID *output, DWORD *outputLen, PSID *sid)
 {
@@ -759,6 +764,23 @@ BOOL kull_m_dpapi_unprotect_domainkey_with_key(PKULL_M_DPAPI_MASTERKEY_DOMAINKEY
 	return status;
 }
 
+BOOL kull_m_dpapi_unprotect_domainkey_with_rpc(PKULL_M_DPAPI_MASTERKEYS masterkeys, PVOID rawMasterkeys, LPCWSTR server, PVOID *output, DWORD *outputLen)
+{
+	BOOL status = FALSE;
+	PBYTE out;
+	DWORD dwOut;
+	*output = NULL;
+	*outputLen = 0;
+	if(status = kull_m_rpc_bkrp_Restore(server, (PBYTE) rawMasterkeys + FIELD_OFFSET(KULL_M_DPAPI_MASTERKEYS, MasterKey) + masterkeys->dwMasterKeyLen + masterkeys->dwBackupKeyLen + masterkeys->dwCredHistLen, (DWORD) masterkeys->dwDomainKeyLen, (PVOID *) &out, &dwOut))
+	{
+		*outputLen = dwOut - sizeof(DWORD);
+		if(*output = LocalAlloc(LPTR, *outputLen))
+			RtlCopyMemory(*output, out + sizeof(DWORD), dwOut - sizeof(DWORD));
+		LocalFree(out);
+	}
+	return status;
+}
+
 BOOL kull_m_dpapi_unprotect_credhist_entry_with_shaDerivedkey(PKULL_M_DPAPI_CREDHIST_ENTRY entry, LPCVOID shaDerivedkey, DWORD shaDerivedkeyLen, PVOID md4hash, PVOID sha1hash)
 {
 	BOOL status = FALSE;
@@ -788,8 +810,8 @@ BOOL kull_m_dpapi_unprotect_credhist_entry_with_shaDerivedkey(PKULL_M_DPAPI_CRED
 						RtlCopyMemory(CryptBuffer, entry->pSecret, OutLen);
 						if(CryptDecrypt(hSessionKey, 0, FALSE, 0, (PBYTE) CryptBuffer, &OutLen))
 						{
-							RtlCopyMemory(sha1hash, CryptBuffer, KIWI_MINIMUM(entry->sha1Len, SHA_DIGEST_LENGTH));
-							RtlCopyMemory(md4hash, (PBYTE) CryptBuffer + entry->sha1Len, KIWI_MINIMUM(entry->md4Len, LM_NTLM_HASH_LENGTH));
+							RtlCopyMemory(sha1hash, CryptBuffer, min(entry->sha1Len, SHA_DIGEST_LENGTH));
+							RtlCopyMemory(md4hash, (PBYTE) CryptBuffer + entry->sha1Len, min(entry->md4Len, LM_NTLM_HASH_LENGTH));
 
 							status = TRUE;
 							if(entry->md4Len - LM_NTLM_HASH_LENGTH)
@@ -823,7 +845,7 @@ void kull_m_dpapi_displayPromptFlags(DWORD flags)
 
 const PCWCHAR DPAPIProtectFlagsToStrings[] = {
 	L"ui_forbidden", L"unknown", L"local_machine", L"cred_sync",
-	L"audit", L"no_recovery", L"verify_protection", L"cred_regenerate"
+	L"audit", L"no_recovery", L"verify_protection", L"cred_regenerate",
 };
 void kull_m_dpapi_displayProtectionFlags(DWORD flags)
 {
@@ -831,6 +853,20 @@ void kull_m_dpapi_displayProtectionFlags(DWORD flags)
 	for(i = 0; i < ARRAYSIZE(DPAPIProtectFlagsToStrings); i++)
 		if((flags >> i) & 1)
 			kprintf(L"%s ; ", DPAPIProtectFlagsToStrings[i]);
-	if(flags & 0x20000000)
-		kprintf(L"%s ; ", "system");
+	if(flags & CRYPTPROTECT_SYSTEM)
+		kprintf(L"%s ; ", L"system");
+}
+
+const PCWCHAR DPAPIBlobFlagsToStrings[] = {
+	L"prompt_on_unprotect", L"prompt_on_protect", L"local_machine", L"prompt_strong",
+	L"audit",
+};
+void kull_m_dpapi_displayBlobFlags(DWORD flags)
+{
+	DWORD i;
+	for(i = 0; i < ARRAYSIZE(DPAPIBlobFlagsToStrings); i++)
+		if((flags >> i) & 1)
+			kprintf(L"%s ; ", DPAPIBlobFlagsToStrings[i]);
+	if(flags & CRYPTPROTECT_SYSTEM)
+		kprintf(L"%s ; ", L"system");
 }

@@ -1,7 +1,7 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #pragma once
 #include "kuhl_m_lsadump.h"
@@ -29,7 +29,3 @@ typedef NTSTATUS	(NTAPI * PLSARETRIEVEPRIVATEDATA) (__in LSA_HANDLE PolicyHandle
 
 DWORD WINAPI kuhl_sekurlsa_samsrv_thread(PREMOTE_LIB_DATA lpParameter);
 DWORD kuhl_sekurlsa_samsrv_thread_end();
-#ifdef LSARPDATA
-DWORD WINAPI kuhl_lsadump_RetrievePrivateData_thread(PREMOTE_LIB_DATA lpParameter);
-DWORD kuhl_lsadump_RetrievePrivateData_thread_end();
-#endif

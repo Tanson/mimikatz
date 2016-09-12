@@ -1,7 +1,7 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #pragma once
 #include "globals.h"
@@ -199,6 +199,20 @@ typedef struct _SYSTEM_THREAD {
 	KWAIT_REASON WaitReason;
 } SYSTEM_THREAD, *PSYSTEM_THREAD;
 
+typedef struct _SYSTEM_BASIC_INFORMATION {
+    ULONG Reserved;
+    ULONG TimerResolution;
+    ULONG PageSize;
+    ULONG NumberOfPhysicalPages;
+    ULONG LowestPhysicalPageNumber;
+    ULONG HighestPhysicalPageNumber;
+    ULONG AllocationGranularity;
+    ULONG MinimumUserModeAddress;
+    ULONG MaximumUserModeAddress;
+    ULONG ActiveProcessorsAffinityMask;
+    UCHAR NumberOfProcessors;
+} SYSTEM_BASIC_INFORMATION, *PSYSTEM_BASIC_INFORMATION;
+
 typedef struct _SYSTEM_PROCESS_INFORMATION {
 	ULONG NextEntryOffset;
 	ULONG NumberOfThreads;
@@ -300,6 +314,13 @@ typedef struct _PEB_F32 {
 } PEB_F32, *PPEB_F32;
 #endif
 
+typedef struct _KERNEL_USER_TIMES {
+  LARGE_INTEGER CreateTime;
+  LARGE_INTEGER ExitTime;
+  LARGE_INTEGER KernelTime;
+  LARGE_INTEGER UserTime;
+} KERNEL_USER_TIMES, *PKERNEL_USER_TIMES;
+
 typedef struct _PROCESS_BASIC_INFORMATION {
 	NTSTATUS ExitStatus;
 	PPEB PebBaseAddress;
@@ -330,6 +351,7 @@ typedef struct _RTL_PROCESS_MODULES
 } RTL_PROCESS_MODULES, *PRTL_PROCESS_MODULES;
 
 extern NTSTATUS WINAPI NtQuerySystemInformation(IN SYSTEM_INFORMATION_CLASS SystemInformationClass, OUT PVOID SystemInformation, IN ULONG SystemInformationLength, OUT OPTIONAL PULONG ReturnLength);
+extern NTSTATUS WINAPI NtSetSystemInformation(IN SYSTEM_INFORMATION_CLASS SystemInformationClass, IN PVOID SystemInformation, IN ULONG SystemInformationLength);
 extern NTSTATUS WINAPI NtQueryInformationProcess(IN HANDLE ProcessHandle, IN PROCESSINFOCLASS ProcessInformationClass, OUT PVOID ProcessInformation, OUT ULONG ProcessInformationLength, OUT OPTIONAL PULONG ReturnLength);
 extern NTSTATUS WINAPI NtSuspendProcess(IN HANDLE ProcessHandle);
 extern NTSTATUS WINAPI NtResumeProcess(IN HANDLE ProcessHandle);

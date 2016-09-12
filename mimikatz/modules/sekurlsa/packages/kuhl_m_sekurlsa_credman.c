@@ -1,7 +1,7 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #include "kuhl_m_sekurlsa_credman.h"
 
@@ -45,8 +45,7 @@ void CALLBACK kuhl_m_sekurlsa_enum_logon_callback_credman(IN PKIWI_BASIC_SECURIT
 	KIWI_CREDMAN_SET_LIST_ENTRY setList;
 	KIWI_CREDMAN_LIST_STARTER listStarter;
 	DWORD nbCred = 0;
-	KULL_M_MEMORY_HANDLE hLocalMemory = {KULL_M_MEMORY_TYPE_OWN, NULL};
-	KULL_M_MEMORY_ADDRESS aLocalMemory = {&setList, &hLocalMemory}, aLsassMemory = {pData->pCredentialManager, pData->cLsass->hLsassMem};
+	KULL_M_MEMORY_ADDRESS aLocalMemory = {&setList, &KULL_M_MEMORY_GLOBAL_OWN_HANDLE}, aLsassMemory = {pData->pCredentialManager, pData->cLsass->hLsassMem};
 	PVOID pRef;
 	KIWI_GENERIC_PRIMARY_CREDENTIAL kiwiCreds;
 	ULONG CredOffsetIndex;

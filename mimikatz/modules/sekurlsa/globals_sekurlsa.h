@@ -1,13 +1,13 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #pragma once
 #include "globals.h"
 #include "../modules/kull_m_patch.h"
 #include "../modules/kull_m_process.h"
-#include "../modules/kull_m_rpce.h"
+#include "../modules/rpc/kull_m_rpc.h"
 #include "../dpapi/kuhl_m_dpapi_oe.h"
 
 typedef struct _RTL_BALANCED_LINKS {

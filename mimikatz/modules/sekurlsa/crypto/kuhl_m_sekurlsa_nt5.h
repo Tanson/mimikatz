@@ -1,10 +1,12 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #pragma once
 #include "../globals_sekurlsa.h"
+
+#define KUHL_M_SEKURLSA_NT5_SP2_MIN_TIMESTAMP	0x45d70a62
 
 NTSTATUS kuhl_m_sekurlsa_nt5_init();
 NTSTATUS kuhl_m_sekurlsa_nt5_clean();

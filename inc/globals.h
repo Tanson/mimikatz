@@ -1,12 +1,14 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #pragma once
 #include <ntstatus.h>
 #define WIN32_NO_STATUS
 #define SECURITY_WIN32
+#define CINTERFACE
+#define COBJMACROS
 #include <windows.h>
 #include <sspi.h>
 #include <sddl.h>
@@ -18,8 +20,8 @@
 #include "../modules/kull_m_output.h"
 //#define KERBEROS_TOOLS
 //#define LSASS_DECRYPT
-//#define LSARPDATA
 #define NET_MODULE
+#define SQLITE3_OMIT
 #ifdef _M_X64
 	#define MIMIKATZ_ARCH L"x64"
 #else ifdef _M_IX86
@@ -27,9 +29,10 @@
 #endif
 
 #define MIMIKATZ				L"mimikatz"
-#define MIMIKATZ_VERSION		L"2.0 alpha"
-#define MIMIKATZ_CODENAME		L"Kiwi en C"
-#define MIMIKATZ_FULL			MIMIKATZ L" " MIMIKATZ_VERSION L" (" MIMIKATZ_ARCH L") release \"" MIMIKATZ_CODENAME L"\" (" TEXT(__DATE__) L" " TEXT(__TIME__) L")"
+#define MIMIKATZ_VERSION		L"2.1"
+#define MIMIKATZ_CODENAME		L"A La Vie, A L\'Amour"
+#define MIMIKATZ_FULL			MIMIKATZ L" " MIMIKATZ_VERSION L" (" MIMIKATZ_ARCH L") built on " TEXT(__DATE__) L" " TEXT(__TIME__)
+#define MIMIKATZ_SECOND			L"\"" MIMIKATZ_CODENAME L"\""
 #define MIMIKATZ_SPECIAL		L"                                "
 #define MIMIKATZ_DEFAULT_LOG	MIMIKATZ L".log"
 #define MIMIKATZ_DRIVER			L"mimidrv"
@@ -65,10 +68,9 @@ DWORD MIMIKATZ_NT_MAJOR_VERSION, MIMIKATZ_NT_MINOR_VERSION, MIMIKATZ_NT_BUILD_NU
 #define MS_ENH_RSA_AES_PROV_XP	L"Microsoft Enhanced RSA and AES Cryptographic Provider (Prototype)"
 #endif
 
-#define RtlEqualLuid(L1, L2) (((L1)->LowPart == (L2)->LowPart) && ((L1)->HighPart == (L2)->HighPart))
 #define RtlEqualGuid(L1, L2) (RtlEqualMemory(L1, L2, sizeof(GUID)))
 
-#define KIWI_MINIMUM(a,b) (((a) < (b)) ? (a) : (b))
+#define SIZE_ALIGN(size, alignment)	(size + ((size % alignment) ? (alignment - (size % alignment)) : 0))
 
 #define LM_NTLM_HASH_LENGTH	16
 
@@ -78,7 +80,9 @@ DWORD MIMIKATZ_NT_MAJOR_VERSION, MIMIKATZ_NT_MINOR_VERSION, MIMIKATZ_NT_BUILD_NU
 #define KULL_M_WIN_BUILD_7		7600
 #define KULL_M_WIN_BUILD_8		9200
 #define KULL_M_WIN_BUILD_BLUE	9600
-#define KULL_M_WIN_BUILD_10		9800
+#define KULL_M_WIN_BUILD_10_1507		10240
+#define KULL_M_WIN_BUILD_10_1511		10586
+#define KULL_M_WIN_BUILD_10_1607		14393
 
 #define KULL_M_WIN_MIN_BUILD_XP		2500
 #define KULL_M_WIN_MIN_BUILD_2K3	3000

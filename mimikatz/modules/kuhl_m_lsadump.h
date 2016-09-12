@@ -1,7 +1,7 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #pragma once
 #include "kuhl_m.h"
@@ -14,6 +14,8 @@
 #include "../modules/kull_m_crypto_system.h"
 #include "../modules/kull_m_string.h"
 #include "../modules/kull_m_samlib.h"
+#include "../modules/kull_m_net.h"
+#include "../modules/rpc/kull_m_rpc_drsr.h"
 #include "kuhl_m_lsadump_remote.h"
 #include "kuhl_m_crypto.h"
 #include "dpapi/kuhl_m_dpapi_oe.h"
@@ -35,6 +37,41 @@ typedef struct _KIWI_BACKUP_KEY {
 	BYTE data[ANYSIZE_ARRAY];
 } KIWI_BACKUP_KEY, *PKIWI_BACKUP_KEY;
 
+typedef struct _NTDS_LSA_AUTH_INFORMATION {
+    LARGE_INTEGER LastUpdateTime;
+    ULONG AuthType;
+    ULONG AuthInfoLength;
+	UCHAR AuthInfo[ANYSIZE_ARRAY]; //
+} NTDS_LSA_AUTH_INFORMATION, *PNTDS_LSA_AUTH_INFORMATION;
+
+typedef struct _NTDS_LSA_AUTH_INFORMATIONS {
+	DWORD count; // or version ?
+	DWORD offsetToAuthenticationInformation;	// PLSA_AUTH_INFORMATION
+	DWORD offsetToPreviousAuthenticationInformation;	// PLSA_AUTH_INFORMATION
+	// ...
+} NTDS_LSA_AUTH_INFORMATIONS, *PNTDS_LSA_AUTH_INFORMATIONS;
+
+#pragma pack(push, 1) 
+typedef struct _USER_PROPERTY {
+	USHORT NameLength;
+	USHORT ValueLength;
+	USHORT Reserved;
+	wchar_t PropertyName[ANYSIZE_ARRAY];
+	// PropertyValue in HEX !
+} USER_PROPERTY, *PUSER_PROPERTY;
+
+typedef struct _USER_PROPERTIES {
+	DWORD Reserved1;
+	DWORD Length;
+	USHORT Reserved2;
+	USHORT Reserved3;
+	BYTE Reserved4[96];
+	wchar_t PropertySignature;
+	USHORT PropertyCount;
+	USER_PROPERTY UserProperties[ANYSIZE_ARRAY];
+} USER_PROPERTIES, *PUSER_PROPERTIES;
+#pragma pack(pop)
+
 const KUHL_M kuhl_m_lsadump;
 
 NTSTATUS kuhl_m_lsadump_init();
@@ -45,9 +82,10 @@ NTSTATUS kuhl_m_lsadump_secrets(int argc, wchar_t * argv[]);
 NTSTATUS kuhl_m_lsadump_cache(int argc, wchar_t * argv[]);
 NTSTATUS kuhl_m_lsadump_trust(int argc, wchar_t * argv[]);
 NTSTATUS kuhl_m_lsadump_secretsOrCache(int argc, wchar_t * argv[], BOOL secretsOrCache);
-NTSTATUS kuhl_m_lsadump_hash(int argc, wchar_t * argv[]);
 NTSTATUS kuhl_m_lsadump_bkey(int argc, wchar_t * argv[]);
 NTSTATUS kuhl_m_lsadump_rpdata(int argc, wchar_t * argv[]);
+NTSTATUS kuhl_m_lsadump_dcsync(int argc, wchar_t * argv[]);
+NTSTATUS kuhl_m_lsadump_netsync(int argc, wchar_t * argv[]);
 
 BOOL kuhl_m_lsadump_getSids(IN PKULL_M_REGISTRY_HANDLE hSecurity, IN HKEY hPolicyBase, IN LPCWSTR littleKey, IN LPCWSTR prefix);
 BOOL kuhl_m_lsadump_getComputerAndSyskey(IN PKULL_M_REGISTRY_HANDLE hRegistry, IN HKEY hSystemBase, OUT LPBYTE sysKey);
@@ -57,15 +95,14 @@ BOOL kuhl_m_lsadump_getCurrentControlSet(PKULL_M_REGISTRY_HANDLE hRegistry, HKEY
 BOOL kuhl_m_lsadump_getSyskey(PKULL_M_REGISTRY_HANDLE hRegistry, HKEY hLSA, LPBYTE sysKey);
 BOOL kuhl_m_lsadump_getSamKey(PKULL_M_REGISTRY_HANDLE hRegistry, HKEY hAccount, LPCBYTE sysKey, LPBYTE samKey);
 BOOL kuhl_m_lsadump_getHash(PSAM_SENTRY pSamHash, LPCBYTE pStartOfData, LPCBYTE samKey, DWORD rid, BOOL isNtlm);
-NTSTATUS kuhl_m_lsadump_get_dcc(PBYTE dcc, PBYTE ntlm, PUNICODE_STRING Username, DWORD realIterations);
 
 void kuhl_m_lsadump_lsa_user(SAMPR_HANDLE DomainHandle, DWORD rid, PUNICODE_STRING name, PKULL_M_MEMORY_ADDRESS aRemoteThread);
 BOOL kuhl_m_lsadump_lsa_getHandle(PKULL_M_MEMORY_HANDLE * hMemory, DWORD Flags);
-void kuhl_m_lsadump_trust_authinformation(PLSA_AUTH_INFORMATION info, DWORD count, PCWSTR prefix, PCUNICODE_STRING from, PCUNICODE_STRING dest);
+void kuhl_m_lsadump_trust_authinformation(PLSA_AUTH_INFORMATION info, DWORD count, PNTDS_LSA_AUTH_INFORMATION infoNtds, PCWSTR prefix, PCUNICODE_STRING from, PCUNICODE_STRING dest);
 
-NTSTATUS kuhl_m_lsadump_LsaRetrievePrivateData(PCWSTR systemName, PCWSTR secretName, PUNICODE_STRING secret, BOOL isInject);
+NTSTATUS kuhl_m_lsadump_LsaRetrievePrivateData(PCWSTR systemName, PCWSTR secretName, PUNICODE_STRING secret, BOOL isSecret);
 void kuhl_m_lsadump_analyzeKey(LPCGUID guid, PKIWI_BACKUP_KEY secret, DWORD size, BOOL isExport);
-NTSTATUS kuhl_m_lsadump_getKeyFromGUID(LPCGUID guid, BOOL isExport, LPCWSTR systemName, BOOL isInject);
+NTSTATUS kuhl_m_lsadump_getKeyFromGUID(LPCGUID guid, BOOL isExport, LPCWSTR systemName, BOOL isSecret);
 
 typedef  enum _DOMAIN_SERVER_ROLE
 {
@@ -94,8 +131,36 @@ typedef struct _SAM_KEY_DATA {
 	DWORD unk1;
 } SAM_KEY_DATA, *PSAM_KEY_DATA;
 
+//BYTE samKeyAES[] = {
+//	/* Flags/Rev ? */	0x02, 0x00, 0x00, 0x00,
+//	/* Struct Size */	0x70, 0x00, 0x00, 0x00,
+//						
+//						0x30, 0x00, 0x00, 0x00,
+//						0x20, 0x00, 0x00, 0x00,
+//						
+//						0x30, 0x00, 0x00, 0x00,
+//						0x20, 0x00, 0x00, 0x00,
+//	/* IV */			0x92, 0xC2, 0x72, 0xF0, 0x42, 0xF2, 0x73, 0x7E, 0x8D, 0x62, 0x1F, 0x5A, 0x0C, 0xF9, 0x91, 0xBD,
+//						
+//	/* Data */			0x2D, 0x12, 0x3C, 0x86, 0x97, 0xD9, 0x19, 0x5B, 0x82, 0x8D, 0x94, 0x18, 0x0B, 0x48, 0xF6, 0xEA,
+//						0x1B, 0xD7, 0xC9, 0x65, 0x7A, 0x75, 0x90, 0x72, 0xE5, 0x68, 0xAD, 0x88, 0x27, 0xE5, 0x58, 0xFC,
+//						
+//						0x48, 0x05, 0x59, 0xE3, 0x91, 0x2A, 0x0E, 0xD2, 0x83, 0xEE, 0x17, 0xD9, 0x8D, 0xDB, 0xC4, 0xB7,
+//						0xBB, 0xB5, 0xE6, 0x75, 0x9E, 0x86, 0xAB, 0x55, 0x49, 0x42, 0x6C, 0x48, 0x87, 0xAC, 0x36, 0x89,
+//						0x6B, 0xD9, 0x66, 0x23, 0xB1, 0xA8, 0x1E, 0x6C  /* .. ??? */
+//};
+typedef struct _SAM_KEY_DATA_AES {
+	DWORD Revision; // 2
+	DWORD Length;
+	DWORD CheckLen;
+	DWORD DataLen;
+	BYTE Salt[SAM_KEY_DATA_SALT_LENGTH];
+	BYTE data[ANYSIZE_ARRAY]; // Data, then Check
+} SAM_KEY_DATA_AES, *PSAM_KEY_DATA_AES;
+
 typedef struct _DOMAIN_ACCOUNT_F {
-	DWORD Revision;
+	WORD Revision;
+	WORD unk0;
 	DWORD unk1;
 	OLD_LARGE_INTEGER CreationTime;
 	OLD_LARGE_INTEGER DomainModifiedCount;
@@ -141,8 +206,17 @@ typedef struct _USER_ACCOUNT_V {
 	BYTE datas[ANYSIZE_ARRAY];
 } USER_ACCOUNT_V, *PUSER_ACCOUNT_V;
 
+typedef struct _SAM_HASH_AES {
+	WORD PEKID;
+	WORD Revision;
+	DWORD dataOffset;
+	BYTE Salt[SAM_KEY_DATA_SALT_LENGTH];
+	BYTE data[ANYSIZE_ARRAY]; // Data
+} SAM_HASH_AES, *PSAM_HASH_AES;
+
 typedef struct _SAM_HASH {
-	DWORD flag;
+	WORD PEKID;
+	WORD Revision;
 	BYTE hash[LM_NTLM_HASH_LENGTH];
 } SAM_HASH, *PSAM_HASH;
 
@@ -328,15 +402,69 @@ typedef struct _LSA_SUPCREDENTIALS_BUFFERS {
 	PVOID Buffer;
 } LSA_SUPCREDENTIALS_BUFFERS, *PLSA_SUPCREDENTIALS_BUFFERS;
 
-BOOL kuhl_m_lsadump_getLsaKeyAndSecrets(IN PKULL_M_REGISTRY_HANDLE hSecurity, IN HKEY hSecurityBase, IN PKULL_M_REGISTRY_HANDLE hSystem, IN HKEY hSystemBase, IN LPBYTE sysKey, IN BOOL secretsOrCache, IN BOOL kiwime);
+typedef struct _KUHL_LSADUMP_DCC_CACHE_DATA {
+	LPCWSTR username;
+	BYTE ntlm[LM_NTLM_HASH_LENGTH];
+} KUHL_LSADUMP_DCC_CACHE_DATA, *PKUHL_LSADUMP_DCC_CACHE_DATA;
+
+BOOL kuhl_m_lsadump_getLsaKeyAndSecrets(IN PKULL_M_REGISTRY_HANDLE hSecurity, IN HKEY hSecurityBase, IN PKULL_M_REGISTRY_HANDLE hSystem, IN HKEY hSystemBase, IN LPBYTE sysKey, IN BOOL secretsOrCache, IN PKUHL_LSADUMP_DCC_CACHE_DATA pCacheData);
 BOOL kuhl_m_lsadump_getSecrets(IN PKULL_M_REGISTRY_HANDLE hSecurity, IN HKEY hPolicyBase, IN PKULL_M_REGISTRY_HANDLE hSystem, IN HKEY hSystemBase, PNT6_SYSTEM_KEYS lsaKeysStream, PNT5_SYSTEM_KEY lsaKeyUnique);
-BOOL kuhl_m_lsadump_getNLKMSecretAndCache(IN PKULL_M_REGISTRY_HANDLE hSecurity, IN HKEY hPolicyBase, IN HKEY hSecurityBase, PNT6_SYSTEM_KEYS lsaKeysStream, PNT5_SYSTEM_KEY lsaKeyUnique, BOOL kiwime);
+BOOL kuhl_m_lsadump_getNLKMSecretAndCache(IN PKULL_M_REGISTRY_HANDLE hSecurity, IN HKEY hPolicyBase, IN HKEY hSecurityBase, PNT6_SYSTEM_KEYS lsaKeysStream, PNT5_SYSTEM_KEY lsaKeyUnique, IN PKUHL_LSADUMP_DCC_CACHE_DATA pCacheData);
 void kuhl_m_lsadump_printMsCache(PMSCACHE_ENTRY entry, CHAR version);
 void kuhl_m_lsadump_getInfosFromServiceName(IN PKULL_M_REGISTRY_HANDLE hSystem, IN HKEY hSystemBase, IN PCWSTR serviceName);
-BOOL kuhl_m_lsadump_decryptSecret(IN PKULL_M_REGISTRY_HANDLE hSecurity, IN HKEY hSecret, IN PNT6_SYSTEM_KEYS lsaKeysStream, IN PNT5_SYSTEM_KEY lsaKeyUnique, IN PVOID * pBufferOut, IN PDWORD pSzBufferOut);
+BOOL kuhl_m_lsadump_decryptSecret(IN PKULL_M_REGISTRY_HANDLE hSecurity, IN HKEY hSecret, IN LPCWSTR KeyName, IN PNT6_SYSTEM_KEYS lsaKeysStream, IN PNT5_SYSTEM_KEY lsaKeyUnique, IN PVOID * pBufferOut, IN PDWORD pSzBufferOut);
 void kuhl_m_lsadump_candidateSecret(DWORD szBytesSecrets, PVOID bufferSecret, PCWSTR prefix, PCWSTR secretName);
 BOOL kuhl_m_lsadump_sec_aes256(PNT6_HARD_SECRET hardSecretBlob, DWORD hardSecretBlobSize, PNT6_SYSTEM_KEYS lsaKeysStream, PBYTE sysKey);
 
 PKERB_KEY_DATA kuhl_m_lsadump_lsa_keyDataInfo(PVOID base, PKERB_KEY_DATA keys, USHORT Count, PCWSTR title);
 PKERB_KEY_DATA_NEW kuhl_m_lsadump_lsa_keyDataNewInfo(PVOID base, PKERB_KEY_DATA_NEW keys, USHORT Count, PCWSTR title);
 void kuhl_m_lsadump_lsa_DescrBuffer(DWORD type, PVOID Buffer, DWORD BufferSize);
+
+PVOID kuhl_m_lsadump_dcsync_findMonoAttr(ATTRBLOCK *attributes, ATTRTYP type, PVOID data, DWORD *size);
+void kuhl_m_lsadump_dcsync_findPrintMonoAttr(LPCWSTR prefix, ATTRBLOCK *attributes, ATTRTYP type, BOOL newLine);
+
+BOOL kuhl_m_lsadump_dcsync_decrypt(PBYTE encodedData, DWORD encodedDataSize, DWORD rid, LPCWSTR prefix, BOOL isHistory);
+void kuhl_m_lsadump_dcsync_descrObject(ATTRBLOCK *attributes, LPCWSTR szSrcDomain);
+void kuhl_m_lsadump_dcsync_descrUser(ATTRBLOCK *attributes);
+void kuhl_m_lsadump_dcsync_descrUserProperties(PUSER_PROPERTIES properties);
+void kuhl_m_lsadump_dcsync_descrTrust(ATTRBLOCK *attributes, LPCWSTR szSrcDomain);
+void kuhl_m_lsadump_dcsync_descrTrustAuthentication(ATTRBLOCK *attributes, ATTRTYP type, PCUNICODE_STRING domain, PCUNICODE_STRING partner);
+
+typedef wchar_t * LOGONSRV_HANDLE;
+typedef struct _NETLOGON_CREDENTIAL {
+	CHAR data[8]; 
+} NETLOGON_CREDENTIAL, *PNETLOGON_CREDENTIAL; 
+
+typedef struct _NETLOGON_AUTHENTICATOR {
+	NETLOGON_CREDENTIAL Credential;
+	DWORD Timestamp;
+} NETLOGON_AUTHENTICATOR, *PNETLOGON_AUTHENTICATOR;
+
+typedef  enum _NETLOGON_SECURE_CHANNEL_TYPE{
+	NullSecureChannel = 0,
+	MsvApSecureChannel = 1,
+	WorkstationSecureChannel = 2,
+	TrustedDnsDomainSecureChannel = 3,
+	TrustedDomainSecureChannel = 4,
+	UasServerSecureChannel = 5,
+	ServerSecureChannel = 6,
+	CdcServerSecureChannel = 7
+} NETLOGON_SECURE_CHANNEL_TYPE;
+
+#define SECRET_SET_VALUE	0x00000001L
+#define SECRET_QUERY_VALUE	0x00000002L
+
+#define SECRET_ALL_ACCESS	(STANDARD_RIGHTS_REQUIRED | SECRET_SET_VALUE | SECRET_QUERY_VALUE)
+#define SECRET_READ			(STANDARD_RIGHTS_READ | SECRET_QUERY_VALUE)
+#define SECRET_WRITE		(STANDARD_RIGHTS_WRITE | SECRET_SET_VALUE)
+#define SECRET_EXECUTE		(STANDARD_RIGHTS_EXECUTE)
+
+extern NTSTATUS WINAPI I_NetServerReqChallenge(IN LOGONSRV_HANDLE PrimaryName, IN wchar_t * ComputerName, IN PNETLOGON_CREDENTIAL ClientChallenge, OUT PNETLOGON_CREDENTIAL ServerChallenge);
+extern NTSTATUS WINAPI I_NetServerAuthenticate2(IN LOGONSRV_HANDLE PrimaryName, IN wchar_t * AccountName, IN NETLOGON_SECURE_CHANNEL_TYPE SecureChannelType, IN wchar_t * ComputerName, IN PNETLOGON_CREDENTIAL ClientCredential, OUT PNETLOGON_CREDENTIAL ServerCredential, IN OUT ULONG * NegotiateFlags);
+extern NTSTATUS WINAPI I_NetServerTrustPasswordsGet(IN LOGONSRV_HANDLE TrustedDcName, IN wchar_t* AccountName, IN NETLOGON_SECURE_CHANNEL_TYPE SecureChannelType, IN wchar_t* ComputerName, IN PNETLOGON_AUTHENTICATOR Authenticator, OUT PNETLOGON_AUTHENTICATOR ReturnAuthenticator, OUT PENCRYPTED_NT_OWF_PASSWORD EncryptedNewOwfPassword, OUT PENCRYPTED_NT_OWF_PASSWORD EncryptedOldOwfPassword);
+extern NTSTATUS NTAPI LsaOpenSecret(__in LSA_HANDLE PolicyHandle, __in PLSA_UNICODE_STRING SecretName, __in ACCESS_MASK DesiredAccess, __out PLSA_HANDLE SecretHandle);
+extern NTSTATUS NTAPI LsaSetSecret(__in LSA_HANDLE SecretHandle, __in_opt PLSA_UNICODE_STRING CurrentValue, __in_opt PLSA_UNICODE_STRING OldValue);
+extern NTSTATUS NTAPI LsaQuerySecret(__in LSA_HANDLE SecretHandle, __out_opt OPTIONAL PLSA_UNICODE_STRING *CurrentValue, __out_opt PLARGE_INTEGER CurrentValueSetTime, __out_opt PLSA_UNICODE_STRING *OldValue, __out_opt PLARGE_INTEGER OldValueSetTime);
+
+NTSTATUS kuhl_m_lsadump_netsync_NlComputeCredentials(PBYTE input, PBYTE output, PBYTE key);
+void kuhl_m_lsadump_netsync_AddTimeStampForAuthenticator(PNETLOGON_CREDENTIAL Credential, DWORD TimeStamp, PNETLOGON_AUTHENTICATOR Authenticator, BYTE sessionKey[MD5_DIGEST_LENGTH]);

